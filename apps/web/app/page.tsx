@@ -46,7 +46,7 @@ export default function LandingPage() {
                 className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-[#181B2B] hover:bg-[#22273D] text-indigo-300 border border-indigo-500/30 transition-all flex items-center space-x-1.5"
               >
                 <Mic2 className="w-3.5 h-3.5" />
-                <span>Voice Studio</span>
+                <span>Y Studio</span>
               </Link>
               <Link
                 href="/video-editor"
@@ -60,7 +60,7 @@ export default function LandingPage() {
                 className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black shadow-md shadow-amber-500/25 transition-all flex items-center space-x-1.5 font-bold"
               >
                 <Sparkles className="w-3.5 h-3.5 fill-current" />
-                <span>Image Prompts</span>
+                <span>Prompt Generator</span>
               </Link>
             </div>
           </div>
@@ -89,7 +89,7 @@ export default function LandingPage() {
 
         {/* 3 Dedicated Creative Product Feature Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
-          {/* Card 1: Voice Studio */}
+          {/* Card 1: Y Studio */}
           <Link
             href="/app/studio"
             className="p-5 rounded-2xl bg-gradient-to-b from-[#161A2B] to-[#0F111E] border border-[#212845] hover:border-indigo-500/50 transition-all flex flex-col items-center text-center group shadow-lg shadow-indigo-950/20 hover:shadow-indigo-500/10 cursor-pointer"
@@ -97,8 +97,8 @@ export default function LandingPage() {
             <div className="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 mb-3 group-hover:scale-110 transition-transform">
               <Mic2 className="w-6 h-6" />
             </div>
-            <span className="font-bold text-base text-gray-100 mb-1">Voice Studio</span>
-            <span className="text-xs text-gray-400 leading-normal">1000+ Voices & Custom Voice Cloning</span>
+            <span className="font-bold text-base text-gray-100 mb-1">Y Studio</span>
+            <span className="text-xs text-gray-400 leading-normal">AI Voice Generation, Cloning & Speech Synthesis</span>
           </Link>
 
           {/* Card 2: Video Editor */}
@@ -110,10 +110,10 @@ export default function LandingPage() {
               <Film className="w-6 h-6" />
             </div>
             <span className="font-bold text-base text-gray-100 mb-1">Video Editor</span>
-            <span className="text-xs text-gray-400 leading-normal">Ken Burns Documentaries & 4K Export</span>
+            <span className="text-xs text-gray-400 leading-normal">Ken Burns Documentaries & Video Timeline</span>
           </Link>
 
-          {/* Card 3: Image Prompt Generator */}
+          {/* Card 3: Prompt Generator */}
           <Link
             href="/app/image-prompts"
             className="p-5 rounded-2xl bg-gradient-to-b from-[#1F1912] to-[#0F0E14] border border-[#3D2C1C] hover:border-amber-500/60 transition-all flex flex-col items-center text-center group shadow-lg shadow-amber-950/20 hover:shadow-amber-500/15 cursor-pointer"
@@ -121,8 +121,8 @@ export default function LandingPage() {
             <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-amber-500/20 to-orange-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 mb-3 group-hover:scale-110 transition-transform">
               <Sparkles className="w-6 h-6 fill-current" />
             </div>
-            <span className="font-bold text-base text-amber-300 mb-1">Image Prompt Generator</span>
-            <span className="text-xs text-gray-400 leading-normal">AI Script-to-Image Visual Prompts</span>
+            <span className="font-bold text-base text-amber-300 mb-1">Prompt Generator</span>
+            <span className="text-xs text-gray-400 leading-normal">Scene-by-Scene Visual Prompt Creator</span>
           </Link>
         </div>
       </section>

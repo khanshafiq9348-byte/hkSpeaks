@@ -19,17 +19,12 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.voices import router as voices_router
 from app.api.v1.tts import router as tts_router
 from app.api.v1.projects import router as projects_router
-from app.api.v1.billing import router as billing_router
-from app.api.v1.api_keys import router as api_keys_router
-from app.api.v1.admin import router as admin_router
 from app.api.v1.storage import router as storage_router
 from app.api.v1.health import router as health_router
 from app.api.v1.video_editor import router as video_editor_router
 from app.api.v1.image_prompts import router as image_prompts_router
-from app.api.v1.bulk_images import router as bulk_images_router
 from app.workers.video_processor import video_render_queue
 from app.workers.prompt_processor import prompt_queue
-from app.workers.bulk_image_processor import bulk_image_queue
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tts_platform")
@@ -51,9 +46,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("Starting background prompt queue worker...")
     await prompt_queue.start()
-
-    logger.info("Starting background bulk image queue worker...")
-    await bulk_image_queue.start()
 
     yield
 
@@ -157,18 +149,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         }
     )
 
-# Register API Routers under /v1
+# Register API Routers under /v1 (Y Studio, Video Editor, Prompt Generator, Auth & Storage)
 app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(voices_router, prefix=settings.API_V1_STR)
 app.include_router(tts_router, prefix=settings.API_V1_STR)
 app.include_router(projects_router, prefix=settings.API_V1_STR)
-app.include_router(billing_router, prefix=settings.API_V1_STR)
-app.include_router(api_keys_router, prefix=settings.API_V1_STR)
-app.include_router(admin_router, prefix=settings.API_V1_STR)
 app.include_router(storage_router, prefix=settings.API_V1_STR)
 app.include_router(video_editor_router, prefix=settings.API_V1_STR)
 app.include_router(image_prompts_router, prefix=settings.API_V1_STR)
-app.include_router(bulk_images_router, prefix=settings.API_V1_STR)
 
 # Mount Health check at root
 app.include_router(health_router)

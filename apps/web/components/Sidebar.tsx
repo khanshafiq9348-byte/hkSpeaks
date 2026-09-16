@@ -10,7 +10,6 @@ import {
   Sparkles,
   FolderKanban,
   History,
-  KeyRound,
   Crown,
   ChevronDown,
   ChevronRight,
@@ -22,7 +21,7 @@ import {
   LogOut,
   Zap,
   Globe,
-  ShieldAlert
+  Wand2
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -60,9 +59,10 @@ export default function Sidebar() {
   const isElevenLabsActive = isStudio && currentCategory === "elevenlabs";
   const isCloneActive = (isStudio && currentCategory === "clone") || pathname === "/app/clone";
   const isVoicesSectionActive = isStudio || pathname.startsWith("/app/voices") || pathname === "/app/clone";
+  const isVideoEditor = pathname.startsWith("/video-editor");
+  const isPrompts = pathname.startsWith("/app/image-prompts") || pathname.startsWith("/image-prompts");
   const isProjects = pathname.startsWith("/app/projects");
   const isHistory = pathname.startsWith("/app/history");
-  const isApi = pathname.startsWith("/app/api");
 
   return (
     <aside
@@ -136,7 +136,7 @@ export default function Sidebar() {
           }`}
         >
           <Mic2 className="w-4 h-4 flex-shrink-0" />
-          {!isCollapsed && <span className="text-sm font-medium">Studio</span>}
+          {!isCollapsed && <span className="text-sm font-medium">Y Studio</span>}
         </Link>
 
         {/* Voices Category Group */}
@@ -284,43 +284,41 @@ export default function Sidebar() {
           {!isCollapsed && <span className="text-sm font-medium">History</span>}
         </Link>
 
-        {/* API / Developer API */}
+        {/* Video Editor */}
         <Link
-          href="/app/api"
-          title="API / Developer API"
+          href="/video-editor"
+          title="Video Editor (Documentary)"
           className={`flex items-center rounded-xl transition-all ${
             isCollapsed
               ? "justify-center p-3"
               : "space-x-3 px-3.5 py-2.5"
           } ${
-            isApi
-              ? "bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30"
+            isVideoEditor
+              ? "bg-purple-600 text-white font-semibold shadow-md shadow-purple-600/30"
               : "text-gray-300 hover:text-white hover:bg-[#141726]"
           }`}
         >
-          <KeyRound className="w-4 h-4 flex-shrink-0" />
-          {!isCollapsed && <span className="text-sm font-medium">API / Developer API</span>}
+          <Film className="w-4 h-4 flex-shrink-0 text-purple-400" />
+          {!isCollapsed && <span className="text-sm font-medium">Video Editor</span>}
         </Link>
 
-        {/* Admin Link if admin */}
-        {user?.role === "admin" && (
-          <Link
-            href="/admin"
-            title="Admin Dashboard"
-            className={`flex items-center rounded-xl transition-all ${
-              isCollapsed
-                ? "justify-center p-3"
-                : "space-x-3 px-3.5 py-2.5"
-            } ${
-              pathname.startsWith("/admin")
-                ? "bg-rose-600 text-white font-semibold"
-                : "text-rose-400 hover:text-rose-300 hover:bg-rose-950/20"
-            }`}
-          >
-            <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-            {!isCollapsed && <span className="text-sm font-medium">Admin</span>}
-          </Link>
-        )}
+        {/* Prompt Generator */}
+        <Link
+          href="/app/image-prompts"
+          title="Prompt Generator"
+          className={`flex items-center rounded-xl transition-all ${
+            isCollapsed
+              ? "justify-center p-3"
+              : "space-x-3 px-3.5 py-2.5"
+          } ${
+            isPrompts
+              ? "bg-amber-500 text-black font-semibold shadow-md shadow-amber-500/30"
+              : "text-gray-300 hover:text-white hover:bg-[#141726]"
+          }`}
+        >
+          <Wand2 className="w-4 h-4 flex-shrink-0 text-amber-400" />
+          {!isCollapsed && <span className="text-sm font-medium">Prompt Generator</span>}
+        </Link>
       </nav>
 
       {/* 4. Bottom Section: User Info & Logout */}
