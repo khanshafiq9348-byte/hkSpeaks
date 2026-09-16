@@ -93,19 +93,6 @@ export default function LoginPage() {
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in to Studio"}
             </button>
           </form>
-
-          <div className="mt-6 text-center text-xs text-gray-400">
-            Don't have an account?{" "}
-            <Link href="/signup" className="font-semibold text-indigo-400 hover:text-indigo-300">
-              Create an account
-            </Link>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-[#1C1F30] text-[11px] text-gray-500 space-y-1">
-            <p><strong>Demo Accounts:</strong></p>
-            <p>Admin: <code>admin@hkspeaks.ai</code> / <code>AdminPass123!</code></p>
-            <p>Creator: <code>creator@hkspeaks.ai</code> / <code>CreatorPass123!</code></p>
-          </div>
         </div>
       </div>
     </div>
