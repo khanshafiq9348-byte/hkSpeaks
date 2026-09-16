@@ -3,7 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "description": "HK Speaks AI Voice Studio & Text-to-Speech Platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
+    "build": "npm --prefix apps/web run build",
+    "start:web": "npm --prefix apps/web run start",
     "dev": "python scripts/supervisor.py --dev",
     "start": "python scripts/supervisor.py",
     "status": "python scripts/supervisor.py --status",
