@@ -113,11 +113,14 @@ class EdgeTTSAdapter(TTSProvider):
         else:
             logger.info(f"[Edge TTS Library Voice] Synthesizing library voice '{request.voice_id}' using provider voice '{voice_id}'")
 
-        rate_pct = int(round((request.speed - 1.0) * 100))
-        rate_str = f"{rate_pct:+d}%" if rate_pct != 0 else "+0%"
+        rate_pct = int(round((max(0.5, min(request.speed, 2.0)) - 1.0) * 100))
+        rate_str = f"{rate_pct:+d}%"
 
-        pitch_hz = int(round(request.pitch * 5))
-        pitch_str = f"{pitch_hz:+d}Hz" if pitch_hz != 0 else "+0Hz"
+        pitch_hz = int(round(max(-10.0, min(request.pitch, 10.0)) * 6.0))
+        pitch_str = f"{pitch_hz:+d}Hz"
+
+        vol_pct = int(round(max(10.0, min(request.volume, 200.0)) - 100.0))
+        vol_str = f"{vol_pct:+d}%"
 
         temp_dir = tempfile.gettempdir()
         temp_mp3 = os.path.join(temp_dir, f"edge_out_{uuid.uuid4().hex[:8]}.mp3")
@@ -126,7 +129,8 @@ class EdgeTTSAdapter(TTSProvider):
                 text=request.text,
                 voice=voice_id,
                 rate=rate_str,
-                pitch=pitch_str
+                pitch=pitch_str,
+                volume=vol_str
             )
             await communicate.save(temp_mp3)
 

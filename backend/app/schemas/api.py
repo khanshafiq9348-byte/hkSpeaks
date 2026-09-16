@@ -92,8 +92,9 @@ class GenerationCreate(BaseModel):
     voice_id: str
     voice_type: Optional[str] = None  # "cloned" or "library"
     format: str = Field(default="mp3", pattern="^(mp3|wav)$")
-    speed: Optional[float] = 1.0
+    speed: Optional[float] = 0.9
     pitch: Optional[float] = 0.0
+    volume: Optional[float] = 100.0
     stability: Optional[float] = 0.5
     similarity: Optional[float] = 0.75
     style: Optional[float] = 0.0

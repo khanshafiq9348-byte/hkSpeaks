@@ -114,9 +114,13 @@ class MockTTSProvider(TTSProvider):
         rate_pct = int(round((max(0.5, min(request.speed, 2.0)) - 1.0) * 100))
         rate_str = f"{rate_pct:+d}%"
 
-        # Pitch adjustments (-15Hz to +15Hz)
-        pitch_hz = int(round(max(-10.0, min(request.pitch, 10.0)) * 3.0))
+        # Pitch adjustments (-60Hz to +60Hz)
+        pitch_hz = int(round(max(-10.0, min(request.pitch, 10.0)) * 6.0))
         pitch_str = f"{pitch_hz:+d}Hz"
+
+        # Volume adjustments (-90% to +100%, 100% = +0%)
+        vol_pct = int(round(max(10.0, min(request.volume, 200.0)) - 100.0))
+        vol_str = f"{vol_pct:+d}%"
 
         text_clean = request.text.strip()
         if not text_clean:
@@ -134,6 +138,7 @@ class MockTTSProvider(TTSProvider):
                     voice=voice_name,
                     rate=rate_str,
                     pitch=pitch_str,
+                    volume=vol_str,
                     connect_timeout=15,
                     receive_timeout=30
                 )
@@ -156,12 +161,13 @@ class MockTTSProvider(TTSProvider):
                         pass
         return None
 
-    async def _synthesize_pyttsx3(self, text: str, speed: float = 1.0) -> Optional[bytes]:
+    async def _synthesize_pyttsx3(self, text: str, speed: float = 0.9, volume: float = 100.0) -> Optional[bytes]:
         """Synthesizes human speech using local pyttsx3 / Windows SAPI engine (100% offline)."""
         def _run_engine():
             try:
                 import pyttsx3
                 engine = pyttsx3.init()
+                engine.setProperty("volume", max(0.0, min(volume / 100.0, 1.0)))
                 base_rate = engine.getProperty("rate") or 200
                 engine.setProperty("rate", int(base_rate * max(0.5, min(speed, 2.0))))
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -316,7 +322,7 @@ class MockTTSProvider(TTSProvider):
         # 3. Secondary: Offline Speech Synthesis (pyttsx3 / Windows SAPI) ONLY for standard catalog voices
         if not audio_bytes and not is_cloned_voice:
             logger.info(f"Synthesizing standard voice '{request.text[:40]}...' using offline pyttsx3 engine")
-            audio_bytes = await self._synthesize_pyttsx3(request.text, request.speed)
+            audio_bytes = await self._synthesize_pyttsx3(request.text, request.speed, request.volume)
 
         # 4. Tertiary fallback: Gentle tone if all speech engines fail (catalog only)
         if not audio_bytes and not is_cloned_voice:

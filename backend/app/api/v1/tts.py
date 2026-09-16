@@ -125,8 +125,9 @@ async def generate_speech(
     # 4. Create Generation record (queued)
     estimated_duration = round(max(1.0, text_len / 15.0), 2)
     settings_data = {
-        "speed": body.speed or 1.0,
-        "pitch": body.pitch or 0.0,
+        "speed": float(body.speed if body.speed is not None else 0.9),
+        "pitch": float(body.pitch if body.pitch is not None else 0.0),
+        "volume": float(body.volume if body.volume is not None else 100.0),
         "stability": body.stability or 0.5,
         "similarity": body.similarity or 0.75,
         "style": body.style or 0.0,

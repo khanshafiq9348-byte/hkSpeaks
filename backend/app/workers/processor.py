@@ -94,12 +94,19 @@ async def process_generation_job(generation_id: str):
             total_estimated_cost = 0.0
 
             settings_data = gen.settings_json or {}
-            speed = float(settings_data.get("speed", 1.0))
+            speed = float(settings_data.get("speed", 0.9))
             pitch = float(settings_data.get("pitch", 0.0))
+            volume = float(settings_data.get("volume", 100.0))
             style = float(settings_data.get("style", 0.0))
             stability = float(settings_data.get("stability", 0.5))
             similarity = float(settings_data.get("similarity", 0.75))
             is_cloned_voice = bool(voice.tier == "custom" or voice.owner_user_id)
+
+            logger.info(
+                f"[TTS Trace Worker] Processing generation '{gen.id}' with voice '{voice.name}' "
+                f"(id='{voice.id}', tier='{voice.tier}', model='{voice.model}', provider='{voice.provider}') - "
+                f"Controls: speed={speed}x, pitch={pitch}, volume={volume}%"
+            )
 
             for chunk_text in chunks:
                 req = TTSRequest(
@@ -112,6 +119,7 @@ async def process_generation_job(generation_id: str):
                     model=gen.model or voice.model,
                     speed=speed,
                     pitch=pitch,
+                    volume=volume,
                     style=style,
                     stability=stability,
                     similarity=similarity,

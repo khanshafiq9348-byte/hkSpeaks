@@ -38,12 +38,12 @@ interface Preset {
 }
 
 const PRESETS: Record<string, Preset> = {
-  natural: { name: "Natural", speed: 1.0, pitch: 0.0, stability: 0.5, style: 0.0 },
-  documentary: { name: "Documentary", speed: 0.95, pitch: -1.0, stability: 0.7, style: 0.2 },
-  storytelling: { name: "Storytelling", speed: 0.98, pitch: 0.5, stability: 0.45, style: 0.4 },
-  podcast: { name: "Podcast", speed: 1.05, pitch: 0.0, stability: 0.55, style: 0.3 },
+  natural: { name: "Natural", speed: 0.9, pitch: 0.0, stability: 0.5, style: 0.0 },
+  documentary: { name: "Documentary", speed: 0.85, pitch: -1.0, stability: 0.7, style: 0.2 },
+  storytelling: { name: "Storytelling", speed: 0.95, pitch: 0.5, stability: 0.45, style: 0.4 },
+  podcast: { name: "Podcast", speed: 1.0, pitch: 0.0, stability: 0.55, style: 0.3 },
   energetic: { name: "Energetic", speed: 1.15, pitch: 1.5, stability: 0.4, style: 0.6 },
-  calm: { name: "Calm", speed: 0.9, pitch: -0.5, stability: 0.8, style: 0.1 },
+  calm: { name: "Calm", speed: 0.8, pitch: -0.5, stability: 0.8, style: 0.1 },
 };
 
 function StudioContent() {
@@ -74,8 +74,9 @@ function StudioContent() {
 
   // Settings
   const [presetKey, setPresetKey] = useState<string>("natural");
-  const [speed, setSpeed] = useState<number>(1.0);
+  const [speed, setSpeed] = useState<number>(0.9);
   const [pitch, setPitch] = useState<number>(0.0);
+  const [volume, setVolume] = useState<number>(100);
   const [format, setFormat] = useState<"mp3" | "wav">("mp3");
 
   // Generation state
@@ -354,6 +355,7 @@ function StudioContent() {
         format,
         speed,
         pitch,
+        volume,
         stability: PRESETS[presetKey]?.stability || 0.5,
         style: PRESETS[presetKey]?.style || 0.0,
       };
@@ -779,6 +781,22 @@ function StudioContent() {
                   step="0.5"
                   value={pitch}
                   onChange={(e) => setPitch(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-[#202438] rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-xs text-gray-400 mb-1.5 font-medium">
+                  <span>Volume</span>
+                  <span className="font-mono text-gray-200">{volume}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="200"
+                  step="5"
+                  value={volume}
+                  onChange={(e) => setVolume(parseInt(e.target.value, 10))}
                   className="w-full h-1.5 bg-[#202438] rounded-lg appearance-none cursor-pointer accent-indigo-500"
                 />
               </div>
