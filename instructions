@@ -1,0 +1,3436 @@
+# TTS Platform — AI Coding Agent Build Specification
+
+## 0. Mission
+
+Build a production-ready, extensible **AI Text-to-Speech SaaS platform** focused on creators, businesses, and developers.
+
+The platform must provide:
+
+- High-quality text-to-speech generation
+- Free, Standard, Premium, Ultra/Premium+ voice tiers
+- User-owned private custom/clone voices
+- Voice cloning with explicit authorization/consent safeguards
+- Projects and long-form scripts
+- Generation history and versioning
+- MP3/WAV export
+- Subscription plans and usage/credit accounting
+- A fair-use "Unlimited" plan
+- Developer API and API keys
+- Usage analytics
+- Admin dashboard
+- Provider/model abstraction so TTS providers can be swapped without rewriting the application
+- Background job processing
+- Audio storage and lifecycle management
+- Strong security, rate limiting, audit logging, and abuse prevention
+
+The product should feel like a professional **AI Voice Studio**, not merely a text box that calls a TTS API.
+
+---
+
+# 1. Non-Negotiable Engineering Rules
+
+1. Use TypeScript on the web frontend.
+2. Use Python/FastAPI for the backend and AI/audio services.
+3. Use PostgreSQL as the source of truth for relational data.
+4. Use Redis for caching, rate limiting, queues, and ephemeral job state.
+5. Use background workers for TTS, cloning, audio processing, and other expensive operations.
+6. Never block an HTTP request while waiting for a long TTS generation.
+7. Store audio in object storage (S3-compatible storage such as Cloudflare R2 or AWS S3), not PostgreSQL.
+8. Never hard-code a single TTS vendor into application/business logic.
+9. Implement a provider adapter interface from day one.
+10. Track usage and estimated provider cost for every generation.
+11. Treat "Unlimited" as **fair-use unlimited**, never literal infinite compute.
+12. Never expose provider API keys to the browser.
+13. Never expose private voice IDs/data belonging to another user.
+14. Every state-changing sensitive action must be authenticated and authorized server-side.
+15. All webhook endpoints must verify provider signatures.
+16. All billing/usage mutations must be idempotent.
+17. Do not log raw user voice samples or sensitive audio URLs unnecessarily.
+18. Voice cloning must include explicit authorization/rights confirmation and abuse controls.
+19. Build tests alongside features; do not leave testing until the end.
+20. Prefer simple, maintainable architecture over premature microservices.
+
+---
+
+# 2. Product Positioning
+
+Primary product:
+
+> AI Voice Studio for Creators, Businesses, and Developers
+
+Primary surfaces:
+
+### A. Creator Studio
+For:
+- YouTube
+- documentaries
+- podcasts
+- audiobooks
+- social content
+- e-learning
+- ads
+
+### B. Voice Platform
+For:
+- browsing voices
+- premium voices
+- custom voices
+- authorized voice cloning
+- voice presets
+
+### C. Developer Platform
+For:
+- API keys
+- TTS API
+- usage
+- logs
+- documentation
+- webhooks
+- rate limits
+
+---
+
+# 3. Recommended Technology Stack
+
+## Frontend
+
+- Next.js
+- TypeScript
+- App Router
+- Tailwind CSS
+- shadcn/ui
+- React Hook Form
+- Zod
+- TanStack Query where appropriate
+- Accessible audio player/waveform
+- Responsive design
+
+## Backend
+
+- Python 3.12+
+- FastAPI
+- Pydantic
+- SQLAlchemy 2.x
+- Alembic
+- PostgreSQL
+- Redis
+- Celery + Redis, or an equivalent durable worker queue
+- httpx for provider APIs
+- FFmpeg for audio processing
+
+## Storage
+
+S3-compatible object storage:
+
+- Cloudflare R2 preferred for cost-sensitive deployment
+- AWS S3 as an alternative
+
+Use signed URLs for private audio.
+
+## Authentication
+
+Implement an authentication abstraction so the system can use:
+
+- managed auth provider, or
+- self-hosted auth
+
+Do not couple core business logic to a particular auth vendor.
+
+## Payments
+
+Implement a payment-provider abstraction.
+
+Stripe is a reasonable default for countries/businesses where it is available. If the deployment market requires another provider, support an equivalent through the same abstraction.
+
+## Observability
+
+- Sentry for errors
+- structured application logs
+- request IDs
+- job IDs
+- metrics for latency, failures, queue depth, generation volume, and cost
+
+## Deployment
+
+- Docker
+- Docker Compose for local development
+- production deployment compatible with containerized hosting
+- separate worker process from API process
+
+---
+
+# 4. High-Level Architecture
+
+Use a modular monolith initially.
+
+Do NOT create 15 independent microservices for the MVP.
+
+Recommended architecture:
+
+```text
+                        ┌──────────────────────┐
+                        │      Next.js Web     │
+                        │   Dashboard/Studio   │
+                        └──────────┬───────────┘
+                                   │ HTTPS
+                                   ▼
+                        ┌──────────────────────┐
+                        │     FastAPI API      │
+                        │ Auth / TTS / Billing │
+                        │ Voices / Projects    │
+                        └───────┬───────┬──────┘
+                                │       │
+                         PostgreSQL     Redis
+                                │       │
+                                │       ▼
+                                │   Job Queue
+                                │       │
+                                │       ▼
+                                │  ┌──────────────┐
+                                │  │ TTS Worker   │
+                                │  │ Clone Worker │
+                                │  │ Audio Worker │
+                                │  └──────┬───────┘
+                                │         │
+                                │         ▼
+                                │   Provider Router
+                                │      │    │
+                                │      ▼    ▼
+                                │ Provider A/B/...
+                                │
+                                ▼
+                         Object Storage
+                         MP3/WAV/metadata
+```
+
+Use a module boundary that makes future extraction into services possible.
+
+---
+
+# 5. Repository Structure
+
+Use a monorepo:
+
+```text
+tts-platform/
+│
+├── apps/
+│   └── web/
+│       ├── app/
+│       ├── components/
+│       ├── hooks/
+│       ├── lib/
+│       ├── styles/
+│       └── tests/
+│
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── db/
+│   │   ├── models/
+│   │   ├── schemas/
+│   │   ├── repositories/
+│   │   ├── services/
+│   │   ├── providers/
+│   │   │   ├── base.py
+│   │   │   ├── router.py
+│   │   │   └── adapters/
+│   │   ├── workers/
+│   │   ├── audio/
+│   │   ├── billing/
+│   │   ├── security/
+│   │   └── main.py
+│   ├── migrations/
+│   ├── tests/
+│   └── pyproject.toml
+│
+├── packages/
+│   ├── shared-types/
+│   └── ui/
+│
+├── infra/
+│   ├── docker/
+│   ├── compose/
+│   └── deployment/
+│
+├── docs/
+│   ├── architecture.md
+│   ├── api.md
+│   ├── billing.md
+│   └── security.md
+│
+├── scripts/
+├── .env.example
+├── docker-compose.yml
+├── README.md
+└── BUILD_STATUS.md
+```
+
+If the existing repository differs, adapt to it rather than destroying existing work.
+
+---
+
+# 6. Core Domain Model
+
+Implement these entities.
+
+## User
+
+```text
+id
+email
+display_name
+avatar_url
+status
+created_at
+updated_at
+```
+
+## Organization
+
+Support organizations even if team features are initially disabled.
+
+```text
+id
+name
+owner_id
+created_at
+updated_at
+```
+
+## Membership
+
+```text
+id
+organization_id
+user_id
+role
+created_at
+```
+
+Roles:
+
+- owner
+- admin
+- member
+- viewer
+
+## Subscription
+
+```text
+id
+organization_id/user_id
+plan_id
+provider
+provider_customer_id
+provider_subscription_id
+status
+current_period_start
+current_period_end
+cancel_at_period_end
+created_at
+updated_at
+```
+
+## Plan
+
+```text
+id
+name
+slug
+description
+monthly_price
+currency
+included_characters
+included_seconds
+allow_cloning
+allow_premium_voices
+allow_api
+allow_commercial_use
+priority
+fair_use_limit
+active
+```
+
+## Voice
+
+```text
+id
+name
+slug
+description
+language
+locale
+accent
+gender
+style
+tier
+provider
+provider_voice_id
+model
+preview_audio_key
+is_public
+is_active
+is_clonable
+owner_user_id nullable
+created_at
+updated_at
+```
+
+Voice tiers:
+
+```text
+free
+standard
+premium
+ultra
+custom
+```
+
+## Voice Clone
+
+```text
+id
+owner_user_id
+voice_id
+source_audio_key
+quality_score
+consent_confirmed
+rights_confirmed
+status
+provider
+provider_voice_id
+created_at
+updated_at
+deleted_at
+```
+
+Never make a clone public by default.
+
+## Project
+
+```text
+id
+owner_user_id / organization_id
+name
+description
+created_at
+updated_at
+```
+
+## Project Document
+
+```text
+id
+project_id
+title
+content
+language
+voice_id
+settings_json
+version
+created_at
+updated_at
+```
+
+## Generation
+
+```text
+id
+user_id
+project_document_id nullable
+voice_id
+provider
+model
+input_characters
+estimated_audio_seconds
+actual_audio_seconds
+format
+status
+error_code
+error_message
+storage_key
+provider_request_id
+estimated_cost
+created_at
+completed_at
+```
+
+Statuses:
+
+```text
+queued
+processing
+completed
+failed
+cancelled
+```
+
+## Usage Record
+
+```text
+id
+user_id
+organization_id nullable
+generation_id
+usage_type
+units
+unit_type
+model
+provider
+estimated_cost
+created_at
+```
+
+## Credit Ledger
+
+Use a ledger instead of only storing a mutable balance.
+
+```text
+id
+user_id
+organization_id nullable
+transaction_type
+units
+reference_type
+reference_id
+description
+created_at
+```
+
+Examples:
+
+```text
+subscription_grant
+generation_debit
+refund
+admin_adjustment
+promotional_grant
+```
+
+## API Key
+
+Never store raw API keys.
+
+```text
+id
+user_id / organization_id
+name
+key_prefix
+key_hash
+last_used_at
+expires_at
+revoked_at
+created_at
+```
+
+Display the full key only once.
+
+## API Request Log
+
+```text
+id
+api_key_id
+request_id
+endpoint
+voice_id
+model
+input_characters
+status_code
+latency_ms
+provider
+estimated_cost
+created_at
+```
+
+## Payment
+
+```text
+id
+user_id / organization_id
+provider
+provider_payment_id
+amount
+currency
+status
+metadata_json
+created_at
+```
+
+## Audit Log
+
+```text
+id
+actor_user_id
+organization_id
+action
+resource_type
+resource_id
+metadata_json
+ip_hash/appropriate privacy-safe field
+created_at
+```
+
+---
+
+# 7. Database Rules
+
+1. Use UUIDs or another non-sequential public identifier.
+2. Add indexes to:
+   - user_id
+   - organization_id
+   - status
+   - created_at
+   - provider_voice_id where appropriate
+3. Add foreign keys.
+4. Use soft deletion where legal/business requirements require it.
+5. Never cascade-delete valuable financial records.
+6. Store timestamps in UTC.
+7. Use migrations for all schema changes.
+8. Do not manually edit production schema.
+9. Add unique constraints for provider IDs where appropriate.
+10. Add idempotency keys to payment and generation workflows.
+
+---
+
+# 8. Authentication & Authorization
+
+Implement:
+
+- sign up
+- login
+- logout
+- email verification if supported
+- password reset if using password auth
+- session management
+- protected routes
+- organization roles
+
+Authorization must happen server-side.
+
+Examples:
+
+```text
+User A requests User B's clone
+→ 403
+
+User without premium entitlement requests premium voice
+→ 403/402 according to API semantics
+
+Revoked API key requests TTS
+→ 401
+
+User requests another organization's project
+→ 403
+```
+
+Never trust frontend entitlement flags.
+
+---
+
+# 9. TTS Provider Abstraction
+
+This is one of the most important architectural requirements.
+
+Create a provider interface.
+
+Conceptually:
+
+```python
+class TTSProvider:
+    def synthesize(self, request) -> TTSResult:
+        raise NotImplementedError
+
+    def get_voices(self):
+        raise NotImplementedError
+
+    def health_check(self):
+        raise NotImplementedError
+```
+
+`TTSRequest` should include:
+
+```text
+text
+voice_id
+language
+locale
+model
+speed
+pitch
+style
+stability
+similarity
+format
+sample_rate
+```
+
+`TTSResult` should include:
+
+```text
+audio
+provider_request_id
+duration
+format
+metadata
+```
+
+Implement provider adapters independently.
+
+Example:
+
+```text
+ProviderAdapterA
+ProviderAdapterB
+SelfHostedProvider
+```
+
+Business logic must call:
+
+```text
+TTS Router
+```
+
+not a vendor SDK directly.
+
+---
+
+# 10. Provider Router
+
+Create routing rules based on:
+
+- voice tier
+- voice provider
+- selected model
+- language
+- availability
+- health
+- cost
+- account entitlement
+
+Example:
+
+```text
+premium voice
+→ preferred provider
+→ if unavailable, configured fallback
+```
+
+Do not silently switch to a materially different voice/model without recording it.
+
+Every generation must store:
+
+```text
+provider
+model
+provider_voice_id
+```
+
+---
+
+# 11. TTS Generation Workflow
+
+Frontend:
+
+```text
+User enters text
+↓
+Selects voice
+↓
+Selects settings
+↓
+Clicks Generate
+```
+
+Backend:
+
+```text
+Validate authentication
+↓
+Validate entitlement
+↓
+Validate text
+↓
+Calculate usage
+↓
+Reserve usage/credit
+↓
+Create generation(status=queued)
+↓
+Create background job
+↓
+Return generation_id
+```
+
+Worker:
+
+```text
+Load generation
+↓
+Mark processing
+↓
+Resolve voice
+↓
+Resolve provider/model
+↓
+Call provider
+↓
+Validate returned audio
+↓
+Normalize/transcode with FFmpeg if needed
+↓
+Upload to object storage
+↓
+Record duration/cost/provider request ID
+↓
+Mark completed
+↓
+Finalize usage
+```
+
+On failure:
+
+```text
+Retry transient errors
+↓
+If final failure
+↓
+Refund reserved usage where appropriate
+↓
+Mark failed
+↓
+Record safe error
+```
+
+---
+
+# 12. Long Text Handling
+
+Do not send arbitrarily huge text to one provider request.
+
+Implement chunking.
+
+Example:
+
+```text
+10,000 characters
+↓
+split into safe chunks
+↓
+generate chunk 1
+generate chunk 2
+...
+↓
+validate each chunk
+↓
+concatenate
+↓
+normalize
+↓
+final output
+```
+
+Preserve:
+
+- paragraph order
+- pauses
+- sentence boundaries where possible
+- voice/settings consistency
+
+Store chunk-level job state so failed chunks can retry independently.
+
+---
+
+# 13. Voice Settings
+
+Create a normalized settings model.
+
+Example:
+
+```json
+{
+  "speed": 1.0,
+  "pitch": 0,
+  "stability": 0.5,
+  "similarity": 0.75,
+  "style": 0.0,
+  "language": "en",
+  "format": "mp3"
+}
+```
+
+Not every provider supports every setting.
+
+The provider adapter must map supported settings.
+
+Never pretend a provider supports a setting it does not support.
+
+---
+
+# 14. Voice Presets
+
+Create user-friendly presets:
+
+```text
+Natural
+Documentary
+Professional
+Storytelling
+Podcast
+News
+Calm
+Energetic
+Advertisement
+Audiobook
+```
+
+A preset maps to internal settings.
+
+Example:
+
+```text
+Documentary
+→ moderate speed
+→ natural stability
+→ restrained style
+```
+
+These values should be configurable, not hard-coded throughout the UI.
+
+---
+
+# 15. Voice Library
+
+Build a searchable/filterable voice catalog.
+
+Filters:
+
+- language
+- locale
+- accent
+- gender
+- style
+- tier
+- use case
+- premium/free
+- custom
+
+Voice card should show:
+
+- name
+- preview button
+- language
+- accent
+- style
+- tier
+- premium lock if applicable
+
+Never expose a provider secret.
+
+---
+
+# 16. Voice Cloning
+
+Build cloning as a separate workflow.
+
+### Upload flow
+
+```text
+Create Clone
+↓
+Upload audio
+↓
+Validate file type
+↓
+Validate duration
+↓
+Validate size
+↓
+Analyze audio quality
+↓
+Show rights/consent confirmation
+↓
+User confirms authorization
+↓
+Queue clone job
+↓
+Clone provider/model
+↓
+Quality check
+↓
+Create private voice
+```
+
+Supported source formats can include:
+
+- WAV
+- MP3
+- M4A where supported
+
+Set configurable limits.
+
+Example configuration:
+
+```text
+max_upload_size_mb
+min_duration_seconds
+max_duration_seconds
+allowed_mime_types
+```
+
+Do not embed fixed business limits throughout code.
+
+## Consent
+
+Before cloning, require the user to confirm that:
+
+- they own the voice, or
+- they have authorization to clone it, and
+- they have the necessary rights to use the generated voice.
+
+Record:
+
+```text
+consent_confirmed
+rights_confirmed
+timestamp
+policy_version
+```
+
+For higher-risk workflows, provide additional review/verification mechanisms.
+
+## Default privacy
+
+All cloned voices:
+
+```text
+private = true
+```
+
+User must explicitly publish a voice if marketplace functionality is later enabled.
+
+---
+
+# 17. Voice Abuse Prevention
+
+Implement:
+
+- rate limits
+- clone creation limits
+- suspicious activity logging
+- report voice mechanism
+- admin review
+- delete voice
+- revoke clone
+- account suspension
+- API abuse controls
+
+Do not build a system intended to impersonate real people without authorization.
+
+Add policy pages:
+
+- acceptable use
+- voice cloning policy
+- privacy policy
+- terms
+- copyright/rights policy
+
+---
+
+# 18. Audio Processing
+
+Use FFmpeg.
+
+Required capabilities:
+
+- MP3 encoding
+- WAV encoding
+- sample-rate conversion
+- channel conversion
+- loudness normalization where appropriate
+- concatenation
+- trimming
+- silence handling
+- metadata cleanup
+
+Never assume provider output format.
+
+Validate audio before making it downloadable.
+
+---
+
+# 19. Object Storage
+
+Use private buckets.
+
+Suggested structure:
+
+```text
+users/{user_id}/
+    generations/{generation_id}/output.mp3
+    generations/{generation_id}/output.wav
+    clones/{clone_id}/source.ext
+```
+
+Use short-lived signed URLs.
+
+Do not make user audio publicly readable by default.
+
+Implement cleanup policies for:
+
+- failed temporary files
+- abandoned uploads
+- deleted generations
+- expired temporary artifacts
+
+---
+
+# 20. TTS Studio UI
+
+Main dashboard layout:
+
+```text
+┌──────────────────────────────────────────────┐
+│ Logo     Projects   Voices   API   Billing   │
+├───────────────┬──────────────────────────────┤
+│ Project       │                              │
+│ Documents     │       Script Editor          │
+│ History       │                              │
+│               │                              │
+│               ├──────────────────────────────┤
+│               │ Voice / Settings             │
+│               │                              │
+│               ├──────────────────────────────┤
+│               │ Preview / Generate           │
+│               │                              │
+└───────────────┴──────────────────────────────┘
+```
+
+Required UI states:
+
+- empty
+- loading
+- generating
+- success
+- failed
+- quota exceeded
+- premium locked
+- network error
+
+Never leave the user staring at a disabled button without explanation.
+
+---
+
+# 21. Script Editor
+
+Features:
+
+- multiline editor
+- character counter
+- estimated duration
+- language
+- voice
+- settings
+- generate
+- preview
+- save
+- autosave where appropriate
+
+For long scripts:
+
+```text
+Scene/Section 1
+Scene/Section 2
+Scene/Section 3
+```
+
+Allow individual section regeneration.
+
+---
+
+# 22. Generation History
+
+Show:
+
+- generation ID
+- project
+- voice
+- model
+- duration
+- characters
+- status
+- date
+- play
+- download
+- regenerate
+
+Allow filtering by:
+
+- project
+- date
+- voice
+- status
+
+---
+
+# 23. Audio Player
+
+Implement:
+
+- play/pause
+- seek
+- duration
+- waveform if feasible
+- playback speed
+- download
+- volume
+
+Do not require downloading the entire file just to preview it if storage/CDN supports efficient streaming.
+
+---
+
+# 24. Billing Architecture
+
+Use entitlement checks rather than scattered plan-name comparisons.
+
+Bad:
+
+```python
+if user.plan == "pro":
+```
+
+Better:
+
+```text
+entitlements.can_use_premium_voice(user)
+entitlements.can_clone_voice(user)
+entitlements.can_use_api(user)
+```
+
+Create a central entitlement service.
+
+---
+
+# 25. Usage Accounting
+
+Track at least:
+
+```text
+input characters
+audio seconds
+generation count
+provider
+model
+estimated provider cost
+```
+
+Potential pricing unit:
+
+```text
+characters
+```
+
+Potential internal cost unit:
+
+```text
+characters + audio seconds + provider/model multiplier
+```
+
+This allows you to change pricing without rewriting generation logic.
+
+---
+
+# 26. Credit Reservation
+
+Avoid race conditions.
+
+Example:
+
+```text
+Request generation
+↓
+calculate cost
+↓
+atomic reservation
+↓
+enqueue
+```
+
+If generation fails:
+
+```text
+release/refund reservation
+```
+
+If generation completes:
+
+```text
+convert reservation → final usage
+```
+
+Use database transactions and idempotency keys.
+
+---
+
+# 27. Plans
+
+Create configurable plans rather than hard-coded plan logic.
+
+Initial conceptual tiers:
+
+## Free
+
+- basic voices
+- limited characters
+- limited generations
+- no or limited cloning
+- no/limited API
+
+## Starter
+
+- more characters
+- standard voices
+- basic commercial features
+- API access
+
+## Creator
+
+- premium voices
+- voice cloning
+- higher usage
+- priority generation
+
+## Pro
+
+- higher usage
+- premium/ultra voices
+- advanced cloning
+- larger API limits
+
+## Unlimited
+
+- high/fair-use generation
+- premium voices subject to licensing
+- cloning
+- API subject to fair-use/API limits
+- priority queue
+
+## Enterprise
+
+- custom limits
+- custom pricing
+- dedicated support
+- custom retention
+- custom security
+- potentially dedicated infrastructure
+
+Do not invent final prices before measuring model/provider costs.
+
+---
+
+# 28. Unlimited Plan
+
+Implement:
+
+```text
+unlimited = fair_use_policy
+```
+
+Still track:
+
+- characters
+- seconds
+- requests
+- concurrent jobs
+- provider cost
+- API usage
+
+Apply:
+
+- concurrency limits
+- burst limits
+- queue limits
+- anti-abuse thresholds
+
+If a user exceeds configured fair-use thresholds, handle it according to published policy.
+
+Never use "unlimited" to mean "unbounded API compute."
+
+---
+
+# 29. Developer API
+
+Version the API from day one.
+
+Base:
+
+```text
+/v1
+```
+
+Core endpoints:
+
+```text
+POST   /v1/text-to-speech
+GET    /v1/generations/{generation_id}
+GET    /v1/voices
+GET    /v1/voices/{voice_id}
+POST   /v1/generations/{generation_id}/cancel
+GET    /v1/usage
+```
+
+API key endpoints in authenticated dashboard:
+
+```text
+POST   /api-keys
+GET    /api-keys
+DELETE /api-keys/{id}
+```
+
+Never return raw API key after initial creation.
+
+---
+
+# 30. API Authentication
+
+Use:
+
+```text
+Authorization: Bearer <API_KEY>
+```
+
+Hash keys at rest.
+
+Store only:
+
+```text
+prefix
+hash
+metadata
+```
+
+Support:
+
+- revoke
+- expiration
+- last used
+- per-key rate limits if needed
+
+---
+
+# 31. API Idempotency
+
+Support:
+
+```text
+Idempotency-Key
+```
+
+for generation requests.
+
+If the same key is submitted again:
+
+```text
+return original generation result/state
+```
+
+Do not create duplicate expensive jobs.
+
+---
+
+# 32. Webhooks
+
+Eventually support:
+
+```text
+generation.completed
+generation.failed
+generation.cancelled
+```
+
+Webhook system should include:
+
+- signed payloads
+- retry policy
+- exponential backoff
+- delivery logs
+- replay
+- timeout
+- secret rotation
+
+---
+
+# 33. Rate Limiting
+
+Implement Redis-based rate limiting.
+
+Limit dimensions can include:
+
+```text
+IP
+user
+organization
+API key
+endpoint
+```
+
+Different plans can have different limits.
+
+Return proper HTTP status codes and retry information.
+
+---
+
+# 34. Admin Dashboard
+
+Create:
+
+```text
+/admin
+```
+
+Pages:
+
+```text
+Overview
+Users
+Organizations
+Subscriptions
+Generations
+Voices
+Voice Clones
+Usage
+Costs
+Providers
+Failed Jobs
+Abuse Reports
+Audit Logs
+System Health
+```
+
+Dashboard metrics:
+
+```text
+total users
+active users
+generations today
+characters today
+audio seconds today
+provider cost
+revenue
+failed jobs
+queue depth
+average generation latency
+```
+
+---
+
+# 35. Provider Health Dashboard
+
+For every provider:
+
+```text
+status
+latency
+success rate
+error rate
+last health check
+estimated cost
+```
+
+Support disabling a provider without redeploying application code.
+
+---
+
+# 36. Security
+
+Minimum requirements:
+
+- HTTPS in production
+- secure cookies where applicable
+- CSRF protection where applicable
+- strict CORS
+- input validation
+- output validation
+- rate limiting
+- authorization checks
+- signed object URLs
+- secret management
+- no secrets in Git
+- no provider keys in frontend
+- secure webhook verification
+- audit logs
+- dependency updates
+- file upload validation
+- malware/security scanning where appropriate
+- size limits
+- timeout limits
+
+Do not execute user-uploaded files.
+
+Treat all uploaded files as untrusted.
+
+---
+
+# 37. File Upload Security
+
+For audio uploads:
+
+1. Validate MIME type.
+2. Validate extension.
+3. Validate actual file signature/container where possible.
+4. Enforce file-size limit.
+5. Enforce duration limit.
+6. Store outside executable web root.
+7. Generate server-side storage key.
+8. Never trust original filename.
+9. Sanitize metadata.
+10. Process in an isolated worker environment where possible.
+
+---
+
+# 38. Privacy
+
+Implement:
+
+- account deletion
+- voice clone deletion
+- generation deletion
+- privacy controls
+- data retention configuration
+- clear ownership of generated assets
+- private-by-default audio
+
+Do not use customer voice data for model training unless the applicable product/legal framework explicitly permits it and the user has clearly agreed.
+
+---
+
+# 39. Error Handling
+
+Define safe error codes:
+
+```text
+AUTH_REQUIRED
+FORBIDDEN
+VOICE_NOT_FOUND
+VOICE_NOT_AVAILABLE
+PREMIUM_REQUIRED
+QUOTA_EXCEEDED
+RATE_LIMITED
+INVALID_TEXT
+TEXT_TOO_LONG
+GENERATION_FAILED
+PROVIDER_UNAVAILABLE
+AUDIO_PROCESSING_FAILED
+CLONE_UPLOAD_INVALID
+CLONE_NOT_AUTHORIZED
+CLONE_FAILED
+PAYMENT_REQUIRED
+```
+
+Frontend should map error codes to helpful messages.
+
+Do not expose provider stack traces.
+
+---
+
+# 40. Background Jobs
+
+Create job types:
+
+```text
+tts_generation
+tts_chunk_generation
+audio_merge
+audio_transcode
+voice_clone
+voice_quality_check
+storage_cleanup
+webhook_delivery
+usage_reconciliation
+```
+
+Every job needs:
+
+```text
+job_id
+entity_id
+attempt
+status
+created_at
+started_at
+completed_at
+error
+```
+
+Implement retries only for transient failures.
+
+Do not endlessly retry invalid requests.
+
+---
+
+# 41. Queue Priorities
+
+Support priority levels:
+
+```text
+free
+standard
+premium
+enterprise
+```
+
+But keep the implementation configurable.
+
+Do not allow unlimited priority escalation from client input.
+
+---
+
+# 42. Caching
+
+Cache:
+
+- public voice catalog
+- provider voice metadata
+- plan metadata
+- non-sensitive configuration
+
+Do NOT cache private generated audio indefinitely in Redis.
+
+Use object storage/CDN for audio delivery.
+
+---
+
+# 43. API and Frontend Validation
+
+Use shared schemas where practical.
+
+Frontend:
+
+```text
+Zod
+```
+
+Backend:
+
+```text
+Pydantic
+```
+
+Validate both sides.
+
+Never rely on frontend validation for security.
+
+---
+
+# 44. Testing Requirements
+
+## Backend unit tests
+
+Test:
+
+- usage calculation
+- entitlement checks
+- plan logic
+- credit reservation
+- refunds
+- provider routing
+- authorization
+- API-key hashing
+- webhook verification
+- chunking
+
+## Integration tests
+
+Test:
+
+```text
+API → DB
+API → Redis
+API → worker
+worker → provider mock
+worker → storage mock
+billing webhook → subscription state
+```
+
+## Frontend tests
+
+Test:
+
+- login state
+- TTS form
+- voice selection
+- premium lock
+- generation state
+- error states
+- history
+- billing UI
+
+## End-to-end
+
+At minimum:
+
+```text
+Signup
+→ Dashboard
+→ Create project
+→ Generate TTS
+→ Playback
+→ Download
+```
+
+And:
+
+```text
+Create API key
+→ API generation
+→ poll status
+→ retrieve output
+```
+
+Do not call real expensive TTS providers in normal automated tests. Use provider mocks.
+
+---
+
+# 45. Local Development
+
+Create Docker Compose services:
+
+```text
+postgres
+redis
+backend
+worker
+web
+```
+
+Optional:
+
+```text
+minio
+```
+
+for local S3-compatible object storage.
+
+Provide:
+
+```text
+.env.example
+```
+
+with placeholders only.
+
+Example variables:
+
+```text
+DATABASE_URL=
+REDIS_URL=
+OBJECT_STORAGE_ENDPOINT=
+OBJECT_STORAGE_BUCKET=
+OBJECT_STORAGE_ACCESS_KEY=
+OBJECT_STORAGE_SECRET_KEY=
+AUTH_SECRET=
+PAYMENT_SECRET=
+PAYMENT_WEBHOOK_SECRET=
+TTS_PROVIDER_A_KEY=
+TTS_PROVIDER_B_KEY=
+SENTRY_DSN=
+```
+
+Never commit real values.
+
+---
+
+# 46. Seed Data
+
+Create development seed data:
+
+- demo user
+- plans
+- sample public voices
+- voice categories
+- presets
+
+Do not insert fake provider credentials.
+
+Use clearly marked demo/mock providers for local development.
+
+---
+
+# 47. UI Design Direction
+
+Visual style:
+
+- modern
+- premium
+- clean
+- dark/light theme
+- professional creator-tool feel
+- minimal clutter
+- strong typography
+- obvious generation state
+- waveform/audio-focused interface
+
+Avoid copying another company's UI exactly.
+
+The interface should have its own visual identity.
+
+---
+
+# 48. Main Routes
+
+Create:
+
+```text
+/
+ /pricing
+ /voices
+ /login
+ /signup
+
+/app
+/app/studio
+/app/projects
+/app/projects/[id]
+/app/voices
+/app/voices/cloning
+/app/history
+/app/api
+/app/api/keys
+/app/usage
+/app/billing
+/app/settings
+
+/docs/api
+
+/admin
+/admin/users
+/admin/voices
+/admin/generations
+/admin/providers
+/admin/billing
+/admin/usage
+/admin/audit
+```
+
+Protect routes appropriately.
+
+---
+
+# 49. Pricing Page
+
+Show:
+
+- plan name
+- price
+- usage
+- voice access
+- cloning
+- API
+- commercial rights
+- support
+- fair-use information for Unlimited
+
+Don't make deceptive claims.
+
+---
+
+# 50. Voice Tier UX
+
+Free voice:
+
+```text
+Available
+```
+
+Premium voice for lower plan:
+
+```text
+Premium
+Upgrade
+```
+
+Custom voice:
+
+```text
+Private
+Your Voice
+```
+
+Never imply that a user owns a third-party licensed voice.
+
+---
+
+# 51. Commercial Rights
+
+Make rights explicit in the product.
+
+Voice records should be able to store:
+
+```text
+commercial_use_allowed
+license_type
+license_notes
+```
+
+A voice can be:
+
+```text
+personal_only
+commercial_allowed
+enterprise_only
+restricted
+```
+
+The entitlement system must check these values.
+
+---
+
+# 52. Cost Tracking
+
+For each generation calculate:
+
+```text
+provider cost
+storage cost estimate
+processing cost estimate
+```
+
+At minimum record provider cost.
+
+Admin should be able to calculate:
+
+```text
+revenue
+-
+provider cost
+-
+estimated infrastructure cost
+=
+gross contribution
+```
+
+This is essential before offering aggressive unlimited plans.
+
+---
+
+# 53. Observability
+
+Every request should have:
+
+```text
+request_id
+user_id where safe
+organization_id where safe
+endpoint
+latency
+status
+```
+
+Every generation should have:
+
+```text
+generation_id
+job_id
+provider
+model
+voice
+duration
+characters
+cost
+status
+```
+
+Never log raw script text by default.
+
+---
+
+# 54. Database Transactions
+
+Critical flows must be transactional:
+
+### Generation reservation
+
+```text
+check entitlement
++
+reserve usage
++
+create generation
+```
+
+### Payment webhook
+
+```text
+verify webhook
++
+idempotency check
++
+update subscription
++
+grant usage if applicable
+```
+
+### Generation completion
+
+```text
+update generation
++
+finalize usage
++
+record cost
+```
+
+Use idempotency safeguards.
+
+---
+
+# 55. State Machines
+
+Do not allow arbitrary state transitions.
+
+Generation:
+
+```text
+queued → processing → completed
+queued → cancelled
+processing → failed
+queued → failed
+```
+
+Clone:
+
+```text
+uploaded → validating → processing → ready
+uploaded → rejected
+processing → failed
+ready → deleted
+```
+
+Validate transitions server-side.
+
+---
+
+# 56. Accessibility
+
+Implement:
+
+- keyboard navigation
+- semantic HTML
+- labels
+- focus states
+- screen-reader-friendly controls
+- sufficient contrast
+- accessible audio controls
+- error announcements
+
+---
+
+# 57. Internationalization
+
+Design for multilingual TTS from the beginning.
+
+Voice metadata should support:
+
+```text
+language
+locale
+accent
+```
+
+Do not hard-code English assumptions into the database.
+
+Initial UI can be English, but architecture should support future localization.
+
+---
+
+# 58. Performance
+
+Frontend:
+
+- lazy load heavy editor/audio components
+- paginate history
+- debounce search
+- avoid unnecessary polling
+
+Backend:
+
+- async I/O where appropriate
+- database indexes
+- pagination
+- Redis caching
+- background jobs
+
+Generation:
+
+- parallelize independent chunks where provider limits allow
+- preserve ordering
+- avoid unnecessary transcoding
+
+---
+
+# 59. API Pagination
+
+Use consistent pagination.
+
+Example:
+
+```json
+{
+  "items": [],
+  "next_cursor": null
+}
+```
+
+Prefer cursor pagination for high-volume logs/history.
+
+---
+
+# 60. API Response Format
+
+Use a consistent envelope where appropriate:
+
+```json
+{
+  "data": {},
+  "request_id": "req_123"
+}
+```
+
+Errors:
+
+```json
+{
+  "error": {
+    "code": "QUOTA_EXCEEDED",
+    "message": "You have reached your current usage limit."
+  },
+  "request_id": "req_123"
+}
+```
+
+Do not expose internal exception details.
+
+---
+
+# 61. Frontend Data Fetching
+
+Use a consistent API client.
+
+Do not scatter raw `fetch()` calls throughout components.
+
+Create:
+
+```text
+lib/api/client.ts
+lib/api/voices.ts
+lib/api/generations.ts
+lib/api/projects.ts
+lib/api/billing.ts
+```
+
+Centralize:
+
+- auth
+- headers
+- error parsing
+- retries
+- request IDs
+
+---
+
+# 62. MVP Scope
+
+The first working release MUST contain:
+
+### Authentication
+- signup/login/logout
+- protected dashboard
+
+### TTS
+- text editor
+- voice selection
+- basic settings
+- generation
+- playback
+- MP3 download
+
+### Voices
+- free voices
+- premium voices
+- voice metadata
+- preview
+
+### Projects
+- create project
+- document
+- save script
+- generate
+
+### History
+- list generations
+- playback
+- download
+
+### Billing
+- plans
+- subscription state
+- usage tracking
+- entitlement checks
+
+### Infrastructure
+- PostgreSQL
+- Redis
+- worker
+- object storage
+- provider adapter
+- Docker setup
+
+### Admin
+- basic user/generation/provider monitoring
+
+---
+
+# 63. Phase 2
+
+After MVP is stable:
+
+- voice cloning
+- advanced voice settings
+- custom voices
+- API keys
+- public API
+- API usage
+- webhooks
+- advanced analytics
+- better audio editor
+
+---
+
+# 64. Phase 3
+
+Later:
+
+- professional voice cloning
+- voice marketplace
+- creator voice revenue share
+- dubbing
+- speech-to-speech
+- real-time streaming TTS
+- team collaboration
+- enterprise controls
+- dedicated infrastructure
+- self-hosted models
+
+---
+
+# 65. Real-Time Streaming TTS
+
+Do NOT make this an MVP requirement.
+
+When implemented:
+
+```text
+Client
+↓
+WebSocket/streaming HTTP
+↓
+API
+↓
+Streaming TTS provider/model
+↓
+audio chunks
+↓
+client playback
+```
+
+Use it for:
+
+- conversational apps
+- low-latency assistants
+- live narration
+
+Keep normal asynchronous generation separate.
+
+---
+
+# 66. Voice Marketplace
+
+Future architecture:
+
+```text
+Voice Creator
+↓
+Submit Voice
+↓
+Review
+↓
+Approve
+↓
+Publish
+↓
+Users use voice
+↓
+Usage recorded
+↓
+Revenue calculation
+↓
+Creator payout
+```
+
+Voice marketplace fields may include:
+
+```text
+creator_id
+license
+pricing
+revenue_share
+status
+review_status
+```
+
+Do not launch marketplace before licensing/revenue rules are clearly defined.
+
+---
+
+# 67. Data Retention
+
+Make retention configurable.
+
+For temporary files:
+
+```text
+cleanup after configured period
+```
+
+For user generations:
+
+```text
+user-controlled deletion
+```
+
+For billing records:
+
+```text
+retain according to applicable legal/accounting requirements
+```
+
+Never delete financial records merely because a user deletes a project.
+
+---
+
+# 68. Documentation
+
+Create:
+
+```text
+README.md
+docs/architecture.md
+docs/local-development.md
+docs/api.md
+docs/billing.md
+docs/voice-cloning.md
+docs/security.md
+docs/deployment.md
+```
+
+README must explain:
+
+- prerequisites
+- environment variables
+- local setup
+- database migrations
+- seed data
+- running API
+- running worker
+- running frontend
+- tests
+
+---
+
+# 69. Developer Experience
+
+Provide scripts:
+
+```text
+dev
+dev:web
+dev:api
+dev:worker
+test
+test:web
+test:api
+lint
+format
+typecheck
+db:migrate
+db:seed
+```
+
+Make the first local run straightforward.
+
+---
+
+# 70. CI/CD
+
+CI should run:
+
+```text
+lint
+format check
+typecheck
+unit tests
+integration tests
+build
+```
+
+Do not deploy if required checks fail.
+
+Build Docker images in CI.
+
+Do not place secrets in repository.
+
+---
+
+# 71. Environment Separation
+
+Support:
+
+```text
+development
+staging
+production
+```
+
+Never share production credentials with development.
+
+Use separate:
+
+- databases
+- buckets
+- Redis instances
+- provider keys
+- payment webhook endpoints
+
+where practical.
+
+---
+
+# 72. Deployment
+
+Production topology:
+
+```text
+Load Balancer / CDN
+        ↓
+Next.js
+        ↓
+FastAPI
+        ↓
+PostgreSQL
+Redis
+        ↓
+Workers
+        ↓
+TTS providers / GPU inference
+        ↓
+Object storage
+```
+
+Workers must be independently scalable.
+
+API and workers should not compete for the same resources.
+
+---
+
+# 73. Scaling Strategy
+
+Start:
+
+```text
+1 API
+1 worker
+1 Redis
+1 PostgreSQL
+1 object storage bucket
+```
+
+Scale later:
+
+```text
+API replicas
++
+worker replicas
++
+specialized TTS workers
++
+GPU workers
+```
+
+Separate queues if necessary:
+
+```text
+tts_high
+tts_normal
+tts_low
+clone
+audio
+webhooks
+```
+
+---
+
+# 74. Provider Failover
+
+Implement:
+
+```text
+primary provider
+↓
+health check
+↓
+fallback provider
+```
+
+But only fail over when:
+
+- voice/model compatibility exists
+- licensing permits it
+- quality requirements are acceptable
+
+Record fallback events.
+
+---
+
+# 75. Provider Cost Abstraction
+
+Every provider adapter should expose a cost estimator if possible:
+
+```python
+estimate_cost(request) -> CostEstimate
+```
+
+Return:
+
+```text
+currency
+estimated_amount
+pricing_unit
+```
+
+If provider cost cannot be known before generation, mark it as estimated/unknown and reconcile after generation.
+
+---
+
+# 76. Voice Registry
+
+The internal voice registry should abstract provider voice IDs.
+
+Example:
+
+```text
+Your Voice ID:
+voice_abc123
+
+Provider:
+provider_x
+
+Provider Voice ID:
+external_987
+```
+
+The frontend only sees:
+
+```text
+voice_abc123
+```
+
+Never expose provider-specific IDs unless intentionally part of the developer API.
+
+---
+
+# 77. Model Registry
+
+Create a model registry.
+
+Fields:
+
+```text
+id
+name
+provider
+capabilities
+supported_languages
+supports_cloning
+supports_streaming
+cost_multiplier
+status
+```
+
+This allows administrators to activate/deactivate models without code changes where practical.
+
+---
+
+# 78. Feature Flags
+
+Implement basic feature flags for:
+
+- voice cloning
+- premium voices
+- marketplace
+- streaming
+- API
+- new TTS model
+
+Feature flags should be server-controlled.
+
+---
+
+# 79. Analytics Events
+
+Track product events without storing sensitive text.
+
+Examples:
+
+```text
+voice_previewed
+generation_started
+generation_completed
+generation_failed
+download_clicked
+clone_started
+clone_completed
+subscription_started
+subscription_cancelled
+api_key_created
+```
+
+Do not store raw scripts as analytics payloads.
+
+---
+
+# 80. Acceptance Criteria
+
+The build is not complete until all of these work:
+
+### User
+
+```text
+Sign up
+→ login
+→ dashboard
+```
+
+### TTS
+
+```text
+Enter script
+→ select voice
+→ generate
+→ background processing
+→ completed
+→ play
+→ download
+```
+
+### Usage
+
+```text
+generation
+→ usage recorded
+→ quota updated
+```
+
+### Premium
+
+```text
+free user
+→ premium voice
+→ blocked/upgrade prompt
+```
+
+### Subscription
+
+```text
+subscribe
+→ webhook
+→ entitlement updated
+→ premium access enabled
+```
+
+### API
+
+```text
+create API key
+→ call /v1/text-to-speech
+→ receive generation ID
+→ poll status
+→ retrieve output
+```
+
+### Security
+
+```text
+User A
+→ cannot access User B's project/audio/clone
+```
+
+### Worker
+
+```text
+API remains responsive
+while long generation is processing
+```
+
+### Failure
+
+```text
+provider failure
+→ retry if transient
+→ fail safely if permanent
+→ refund/reslease reserved usage
+```
+
+---
+
+# 81. What NOT to Do
+
+Do not:
+
+- build a giant single frontend component
+- put TTS provider calls directly in React
+- store audio blobs in PostgreSQL
+- store API keys in plaintext
+- trust frontend plan/permission data
+- implement unlimited as infinite compute
+- make cloned voices public by default
+- skip consent/rights controls
+- put provider-specific IDs everywhere
+- block API requests during long generations
+- use synchronous TTS for multi-minute scripts
+- hard-code pricing in frontend
+- hard-code plan names throughout backend
+- silently change voice/model during failover
+- expose raw provider errors
+- log complete private scripts unnecessarily
+- commit `.env` secrets
+- use real provider APIs in unit tests
+- create unnecessary microservices for MVP
+
+---
+
+# 82. Coding Agent Workflow
+
+Follow this implementation order.
+
+## Step 1 — Inspect repository
+
+Before changing anything:
+
+- inspect current files
+- identify existing framework
+- identify existing dependencies
+- identify existing environment configuration
+- identify whether authentication already exists
+- identify database setup
+- identify deployment setup
+
+Do not overwrite existing functionality without understanding it.
+
+## Step 2 — Produce implementation plan
+
+Create:
+
+```text
+BUILD_STATUS.md
+```
+
+with:
+
+- current state
+- target architecture
+- completed tasks
+- remaining tasks
+- blockers
+- decisions
+
+## Step 3 — Infrastructure
+
+Implement:
+
+- Docker Compose
+- PostgreSQL
+- Redis
+- object storage integration
+- environment configuration
+
+## Step 4 — Backend foundation
+
+Implement:
+
+- FastAPI
+- DB models
+- migrations
+- authentication
+- error handling
+- request IDs
+- health checks
+
+## Step 5 — Provider abstraction
+
+Implement:
+
+- base TTS interface
+- mock provider
+- first real provider adapter
+- provider router
+
+The mock provider must work locally without external credentials.
+
+## Step 6 — Generation pipeline
+
+Implement:
+
+- generation endpoint
+- usage calculation
+- credit reservation
+- queue
+- worker
+- audio storage
+- status endpoint
+
+## Step 7 — Frontend
+
+Implement:
+
+- authentication UI
+- dashboard
+- studio
+- voice library
+- history
+- projects
+
+## Step 8 — Billing
+
+Implement:
+
+- plans
+- subscription
+- webhook
+- entitlements
+- usage display
+
+## Step 9 — Admin
+
+Implement:
+
+- user list
+- generation list
+- provider status
+- usage/cost metrics
+
+## Step 10 — Testing
+
+Write and run:
+
+- unit tests
+- integration tests
+- E2E tests
+- security/authorization tests
+
+## Step 11 — Production hardening
+
+Check:
+
+- secrets
+- rate limits
+- logging
+- monitoring
+- signed URLs
+- retries
+- idempotency
+- file validation
+- DB indexes
+- backup strategy
+
+---
+
+# 83. Coding Style
+
+Backend:
+
+- type hints everywhere practical
+- Pydantic schemas
+- service/repository separation where useful
+- dependency injection
+- small functions
+- explicit error types
+- no hidden global mutable state
+
+Frontend:
+
+- reusable components
+- typed API responses
+- accessible components
+- no duplicated API logic
+- no giant page components
+
+Naming:
+
+```text
+snake_case
+```
+
+Python.
+
+```text
+camelCase
+```
+
+TypeScript variables/functions.
+
+```text
+PascalCase
+```
+
+React components/classes.
+
+---
+
+# 84. API Security Rules
+
+For every protected endpoint:
+
+```text
+authenticate
+↓
+authorize
+↓
+validate input
+↓
+perform operation
+```
+
+Not:
+
+```text
+validate frontend
+↓
+trust user-provided owner_id
+```
+
+Never accept ownership fields from the client when they can be derived from authenticated context.
+
+---
+
+# 85. Ownership Rules
+
+For user-owned resources:
+
+```text
+owner_id = authenticated user
+```
+
+For organization resources:
+
+```text
+organization_id = authorized organization
+```
+
+Do not let users choose arbitrary owner IDs.
+
+---
+
+# 86. Generation Cancellation
+
+Support cancellation when practical.
+
+Workflow:
+
+```text
+queued
+→ cancelled
+```
+
+For processing jobs:
+
+```text
+processing
+→ cancellation requested
+→ worker checks cancellation
+→ stop where provider permits
+```
+
+If provider cannot cancel, prevent unnecessary downstream processing and mark appropriately.
+
+---
+
+# 87. Retry Strategy
+
+Retry only:
+
+- provider timeout
+- network failure
+- temporary provider 5xx
+- transient storage failure
+
+Do not retry:
+
+- invalid text
+- invalid voice
+- quota exceeded
+- unauthorized cloning
+- malformed request
+
+Use exponential backoff and maximum retry count.
+
+---
+
+# 88. Audio Quality Checks
+
+After generation verify:
+
+- file exists
+- non-zero size
+- decodes successfully
+- expected format
+- duration is sensible
+- no corrupt output
+
+If possible, detect:
+
+- empty/silent output
+- provider truncation
+- abnormal duration
+
+Flag suspicious outputs for retry/review.
+
+---
+
+# 89. Frontend Generation UX
+
+When user clicks Generate:
+
+```text
+Button:
+Generating…
+
+Progress:
+Queued
+→ Processing
+→ Finalizing
+→ Ready
+```
+
+Use polling initially.
+
+For future scalability, consider SSE/WebSocket updates.
+
+Do not aggressively poll every 100ms.
+
+---
+
+# 90. Usage Dashboard
+
+Display:
+
+```text
+Characters used
+Characters remaining
+Audio generated
+Generations
+Current plan
+Billing period
+```
+
+For Unlimited:
+
+```text
+Usage
+Fair-use status
+```
+
+Do not display misleading "∞" while silently applying hidden restrictions.
+
+---
+
+# 91. Voice Cloning UI
+
+Page:
+
+```text
+Create Custom Voice
+
+1. Upload recording
+2. Audio quality check
+3. Rights confirmation
+4. Create clone
+5. Test
+6. Save
+```
+
+Show clear warnings that users must have authorization.
+
+---
+
+# 92. Settings
+
+Account settings:
+
+```text
+Profile
+Security
+Sessions
+Notifications
+Privacy
+Data
+```
+
+Developer:
+
+```text
+API Keys
+Webhooks
+Usage
+```
+
+Billing:
+
+```text
+Plan
+Payment
+Invoices
+Usage
+```
+
+---
+
+# 93. Notifications
+
+Create notification abstraction.
+
+Events:
+
+```text
+generation_completed
+generation_failed
+clone_ready
+clone_failed
+quota_warning
+payment_failed
+subscription_changed
+```
+
+MVP can use in-app notifications.
+
+Email can be added later.
+
+---
+
+# 94. Search
+
+Voice search should support:
+
+```text
+voice name
+language
+accent
+style
+tags
+```
+
+Use PostgreSQL search initially.
+
+Do not introduce Elasticsearch/OpenSearch unless scale requires it.
+
+---
+
+# 95. Pagination
+
+Never load thousands of generations/voices into one browser request.
+
+Use server-side pagination.
+
+---
+
+# 96. Database Backups
+
+Production requirements:
+
+- automated PostgreSQL backups
+- restore testing
+- object storage lifecycle/versioning where appropriate
+- documented disaster recovery
+
+---
+
+# 97. Health Endpoints
+
+Implement:
+
+```text
+GET /health
+GET /ready
+```
+
+Health should be lightweight.
+
+Readiness should verify critical dependencies where appropriate.
+
+Do not expose secrets or internal topology.
+
+---
+
+# 98. Metrics
+
+Track:
+
+```text
+http_requests
+http_latency
+tts_generations
+tts_success
+tts_failure
+tts_duration
+queue_depth
+worker_failures
+provider_latency
+provider_errors
+characters_generated
+audio_seconds
+estimated_cost
+```
+
+---
+
+# 99. Production Readiness Checklist
+
+Before declaring production-ready:
+
+### Security
+- [ ] no secrets in Git
+- [ ] auth enforced
+- [ ] authorization tested
+- [ ] rate limiting
+- [ ] signed URLs
+- [ ] upload validation
+- [ ] webhook verification
+- [ ] audit logging
+
+### Reliability
+- [ ] retries
+- [ ] idempotency
+- [ ] worker recovery
+- [ ] provider fallback
+- [ ] database backups
+- [ ] monitoring
+
+### Billing
+- [ ] webhook idempotency
+- [ ] usage ledger
+- [ ] refunds
+- [ ] entitlement checks
+- [ ] unlimited fair-use controls
+
+### Product
+- [ ] TTS Studio
+- [ ] voices
+- [ ] projects
+- [ ] history
+- [ ] downloads
+- [ ] pricing
+- [ ] account settings
+
+### Voice cloning
+- [ ] consent
+- [ ] rights confirmation
+- [ ] private by default
+- [ ] deletion
+- [ ] abuse reporting
+- [ ] rate limits
+
+---
+
+# 100. Definition of Done
+
+A feature is DONE only when:
+
+1. Backend implementation exists.
+2. Frontend implementation exists where applicable.
+3. Database migration exists where needed.
+4. Authorization is implemented.
+5. Error states are implemented.
+6. Loading states are implemented.
+7. Tests exist.
+8. Documentation is updated.
+9. Observability exists for important workflows.
+10. No secrets are committed.
+11. The feature works in local Docker environment.
+12. `BUILD_STATUS.md` is updated.
+
+---
+
+# 101. Final Instruction to the Coding Agent
+
+Build the application incrementally.
+
+Do not attempt to generate the entire codebase blindly in one pass.
+
+For each phase:
+
+```text
+Inspect
+→ Plan
+→ Implement
+→ Run tests
+→ Fix errors
+→ Update docs
+→ Update BUILD_STATUS.md
+→ Move to next phase
+```
+
+When a third-party TTS provider is required but credentials are unavailable:
+
+- implement a provider adapter interface
+- implement a mock provider
+- make the application fully runnable locally
+- document exactly which environment variables are required
+- do not invent credentials
+- do not hard-code fake production endpoints
+
+When uncertain between two implementation choices, prefer:
+
+1. maintainability
+2. security
+3. testability
+4. provider independence
+5. cost control
+6. simplicity
+
+The final product must be architected so that a future transition from external TTS APIs to self-hosted GPU inference does not require rewriting the frontend, billing, usage, voice registry, or core generation workflow.
+
+The platform's most important abstraction is:
+
+```text
+User
+  ↓
+Studio / API
+  ↓
+Generation Service
+  ↓
+Usage + Entitlement
+  ↓
+TTS Router
+  ↓
+Provider Adapter
+  ↓
+TTS Engine
+  ↓
+Audio Processing
+  ↓
+Object Storage
+  ↓
+Playback / Download
+```
+
+Keep this boundary clean throughout the implementation.

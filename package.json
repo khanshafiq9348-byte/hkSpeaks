@@ -1,0 +1,13 @@
+{
+  "name": "hk-speaks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HK Speaks AI Voice Studio & Text-to-Speech Platform",
+  "scripts": {
+    "dev": "python scripts/supervisor.py --dev",
+    "start": "python scripts/supervisor.py",
+    "status": "python scripts/supervisor.py --status",
+    "stop": "python scripts/supervisor.py --stop",
+    "restart": "python scripts/supervisor.py --restart"
+  }
+}

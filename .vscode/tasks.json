@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start TTS Platform (Continuous Supervisor)",
+      "type": "shell",
+      "command": "backend\\.venv\\Scripts\\python.exe scripts\\supervisor.py",
+      "windows": {
+        "command": "backend\\.venv\\Scripts\\python.exe scripts\\supervisor.py"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    }
+  ]
+}
