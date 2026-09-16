@@ -501,23 +501,7 @@ def spawn_detached_supervisor() -> bool:
     Spawns supervisor.py as an independent, detached Windows background service.
     Uses Windows Task Scheduler to guarantee complete immunity from parent terminal / Job Object closure.
     """
-    if sys.platform == "win32":
-        ensure_task_scheduler_job()
-        try:
-            res = subprocess.run(
-                'schtasks /Run /TN "HKSpeaksSupervisorDaemon"',
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            if res.returncode == 0:
-                log_msg("[Supervisor] Triggered background daemon via Windows Task Scheduler.")
-                return True
-        except Exception as e:
-            log_msg(f"[Supervisor] Task scheduler trigger warning: {e}")
-
-    # Fallback to direct pythonw spawn
+    # Direct detached pythonw spawn with immunity from terminal closure
     py_exe = get_pythonw_exe()
     script_path = str(ROOT_DIR / "scripts" / "supervisor.py")
     cmd = [py_exe, script_path, "--daemon"]
@@ -537,6 +521,7 @@ def spawn_detached_supervisor() -> bool:
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL
     )
+    log_msg(f"[Supervisor] Detached background supervisor daemon launched (PID {proc.pid}).")
     return True
 
 def print_status(verbose: bool = True) -> int:

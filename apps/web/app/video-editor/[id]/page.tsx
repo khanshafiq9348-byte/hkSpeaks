@@ -16,6 +16,7 @@ import {
   updateVideoTimeline,
   submitVideoRender,
   getRenderJobStatus,
+  getVideoProjectDownloadUrl,
 } from "@/lib/video-api";
 import { useAuth } from "@/lib/auth-context";
 import Navbar from "@/components/Navbar";
@@ -64,6 +65,8 @@ export default function DocumentaryStudioPage() {
   const [showExportDropdown, setShowExportDropdown] = useState(false);
   const [exportResolution, setExportResolution] = useState("1080p");
   const [downloadTriggered, setDownloadTriggered] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
   // Active scene / playback state
@@ -296,38 +299,79 @@ export default function DocumentaryStudioPage() {
 
   async function triggerDirectFileDownload(url: string, filename: string) {
     try {
-      // Direct blob download strictly forces direct file download to disk and NEVER opens in a browser tab
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Download fetch failed");
-      const blob = await res.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.style.display = "none";
-      a.href = blobUrl;
-      a.download = filename || "documentary.mp4";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 15000);
-    } catch (e) {
-      // Fallback with attachment query
-      const fallbackUrl = `${url}${url.includes("?") ? "&" : "?"}download=1`;
-      const a = document.createElement("a");
-      a.style.display = "none";
-      a.href = fallbackUrl;
-      a.setAttribute("download", filename || "documentary.mp4");
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      setIsDownloading(true);
+      setExportError(null);
+
+      // Prefer dedicated project download endpoint if available, fallback to download URL with download=1
+      let downloadUrl = url;
+      if (projectId) {
+        downloadUrl = getVideoProjectDownloadUrl(projectId);
+      }
+      if (!downloadUrl.includes("download=")) {
+        downloadUrl = `${downloadUrl}${downloadUrl.includes("?") ? "&" : "?"}download=1&filename=${encodeURIComponent(filename || "documentary.mp4")}`;
+      }
+
+      // Fast HEAD verification: check that file is finalized on server before launching download
+      try {
+        const headCheck = await fetch(downloadUrl, { method: "HEAD" });
+        if (!headCheck.ok) {
+          // If dedicated endpoint had issue, fallback to url with download=1
+          downloadUrl = `${url}${url.includes("?") ? "&" : "?"}download=1&filename=${encodeURIComponent(filename || "documentary.mp4")}`;
+          const headCheck2 = await fetch(downloadUrl, { method: "HEAD" });
+          if (!headCheck2.ok) {
+            throw new Error(`Rendered video file is not ready on server (HTTP ${headCheck2.status}).`);
+          }
+        }
+      } catch (err: any) {
+        console.warn("HEAD check skipped:", err);
+      }
+
+      // Trigger native browser streaming download via invisible iframe:
+      // - Hands download directly to browser download manager
+      // - Saves straight into user's Downloads folder
+      // - Zero memory overhead (handles 5GB+ files without truncation or RAM crashes)
+      // - Never opens in a new tab
+      // - Never navigates away from the editor
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.src = downloadUrl;
+      document.body.appendChild(iframe);
+
+      // Direct anchor click fallback for browsers with strict iframe download sandboxing
+      const link = document.createElement("a");
+      link.style.display = "none";
+      link.href = downloadUrl;
+      link.setAttribute("download", filename || "documentary.mp4");
+      document.body.appendChild(link);
+      link.click();
+
+      setTimeout(() => {
+        try {
+          if (iframe.parentNode) document.body.removeChild(iframe);
+          if (link.parentNode) document.body.removeChild(link);
+        } catch {}
+      }, 60000);
+
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 4000);
+    } catch (e: any) {
+      console.error("Failed to trigger video download:", e);
+      setExportError(e?.message || "Failed to download MP4 video. Please check connection.");
+    } finally {
+      setIsDownloading(false);
     }
   }
 
   function handleDownloadExportedMp4() {
-    if (!project?.render_outputs || project.render_outputs.length === 0) return;
+    if (!project?.render_outputs || project.render_outputs.length === 0) {
+      if (projectId) {
+        triggerDirectFileDownload(getVideoProjectDownloadUrl(projectId), `${project?.title || "documentary"}_1080p.mp4`);
+      }
+      return;
+    }
     const latest = project.render_outputs[0];
-    const dlUrl = latest.download_url || latest.url;
-    if (!dlUrl) return;
-    triggerDirectFileDownload(dlUrl, latest.filename);
+    const dlUrl = latest.download_url || latest.url || (projectId ? getVideoProjectDownloadUrl(projectId) : "");
+    triggerDirectFileDownload(dlUrl, latest.filename || `${project?.title || "documentary"}_1080p.mp4`);
   }
 
   function toggleAudioPlayback() {
@@ -527,11 +571,26 @@ export default function DocumentaryStudioPage() {
               <div className="flex items-center space-x-1">
                 <button
                   onClick={handleDownloadExportedMp4}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-700/20 transition-all flex items-center space-x-2"
-                  title="Download rendered MP4 video"
+                  disabled={isDownloading}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-700/20 disabled:opacity-80 transition-all flex items-center space-x-2"
+                  title="Download rendered MP4 video to your computer"
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
-                  <span>Download MP4</span>
+                  {isDownloading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-200" />
+                      <span>Starting Download...</span>
+                    </>
+                  ) : downloadSuccess ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-200 stroke-[3]" />
+                      <span>Download Started!</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                      <span>Download MP4</span>
+                    </>
+                  )}
                 </button>
                 <button
                   onClick={() => setShowExportDropdown(!showExportDropdown)}

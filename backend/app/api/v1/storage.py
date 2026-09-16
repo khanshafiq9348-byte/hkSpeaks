@@ -31,57 +31,44 @@ async def get_storage_file(file_path: str, request: Request):
     guessed_type, _ = mimetypes.guess_type(local_path)
     content_type = guessed_type or ("video/mp4" if file_path.endswith(".mp4") else "application/octet-stream")
 
-    is_download = request.query_params.get("download") in ("1", "true", "attachment") or "/renders/" in file_path or file_path.endswith(".mp4")
+    is_download = request.query_params.get("download") in ("1", "true", "attachment")
+    custom_filename = request.query_params.get("filename") or filename
 
-    base_headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Type": content_type,
+    cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Disposition",
         "Cache-Control": "public, max-age=86400",
     }
-    if is_download:
-        base_headers["Content-Disposition"] = f'attachment; filename="{filename}"'
 
     # Handle HEAD request
     if request.method == "HEAD":
+        head_headers = {
+            **cors_headers,
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Type": "application/octet-stream" if is_download else content_type,
+        }
+        if is_download:
+            head_headers["Content-Disposition"] = f'attachment; filename="{custom_filename}"'
+        else:
+            head_headers["Content-Disposition"] = "inline"
         return Response(
             status_code=status.HTTP_200_OK,
-            headers={
-                **base_headers,
-                "Content-Length": str(file_size),
-            }
+            headers=head_headers
         )
 
-    # Handle Range header (e.g. bytes=0-1024 or bytes=0-)
-    range_header = request.headers.get("range")
-    if range_header and range_header.startswith("bytes="):
-        try:
-            byte_range = range_header.replace("bytes=", "").split("-")
-            start = int(byte_range[0]) if byte_range[0] else 0
-            end = int(byte_range[1]) if len(byte_range) > 1 and byte_range[1] else file_size - 1
-            if end >= file_size:
-                end = file_size - 1
-            chunk_length = (end - start) + 1
-
-            with open(local_path, "rb") as f:
-                f.seek(start)
-                data = f.read(chunk_length)
-
-            range_headers = {
-                **base_headers,
-                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Content-Length": str(chunk_length),
-            }
-            return Response(data, status_code=status.HTTP_206_PARTIAL_CONTENT, headers=range_headers)
-        except Exception:
-            pass
-
-    return FileResponse(
-        local_path,
-        media_type=content_type,
-        headers={
-            **base_headers,
-            "Content-Length": str(file_size),
-        }
-    )
+    if is_download:
+        return FileResponse(
+            local_path,
+            filename=custom_filename,
+            media_type="application/octet-stream",
+            content_disposition_type="attachment",
+            headers=cors_headers
+        )
+    else:
+        return FileResponse(
+            local_path,
+            media_type=content_type,
+            content_disposition_type="inline",
+            headers=cors_headers
+        )

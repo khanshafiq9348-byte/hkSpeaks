@@ -1,10 +1,12 @@
 import os
+import re
 import uuid
 import logging
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from PIL import Image
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, status
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, status, Response
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
@@ -626,3 +628,58 @@ async def list_project_renders(
     )
     outputs = res.scalars().all()
     return [RenderOutputResponse.model_validate(o) for o in outputs]
+
+@router.api_route("/projects/{project_id}/download", methods=["GET", "HEAD", "OPTIONS"])
+async def download_project_video(
+    project_id: str,
+    output_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user_or_default),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Directly streams and downloads the finalized rendered MP4 documentary video with Content-Disposition: attachment.
+    Supports multi-gigabyte video files with asynchronous chunked streaming, HEAD check, and HTTP Range resume.
+    """
+    res = await db.execute(select(VideoProject).where(VideoProject.id == project_id))
+    project = res.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Video project not found.")
+
+    if output_id:
+        out_res = await db.execute(
+            select(RenderOutput).where(RenderOutput.id == output_id, RenderOutput.project_id == project.id)
+        )
+    else:
+        out_res = await db.execute(
+            select(RenderOutput)
+            .where(RenderOutput.project_id == project.id)
+            .order_by(desc(RenderOutput.created_at))
+        )
+    output = out_res.scalar_one_or_none()
+    if not output:
+        raise HTTPException(status_code=404, detail="No completed render output found for this project.")
+
+    local_path = storage_service.get_local_path(output.storage_key)
+    if not local_path or not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Rendered MP4 file is not finalized or missing on disk. Please re-export."
+        )
+
+    file_size = os.path.getsize(local_path)
+    clean_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', project.title.strip()).strip('_') or "documentary"
+    dl_filename = f"{clean_title}_{output.resolution or '1080p'}.mp4"
+
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Disposition",
+        "Cache-Control": "public, max-age=86400",
+    }
+
+    return FileResponse(
+        local_path,
+        media_type="application/octet-stream",
+        filename=dl_filename,
+        content_disposition_type="attachment",
+        headers=cors_headers
+    )

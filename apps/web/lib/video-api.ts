@@ -1,4 +1,4 @@
-import { apiClient } from "./api";
+import { apiClient, API_BASE_URL } from "./api";
 
 export interface VideoAsset {
   id: string;
@@ -229,4 +229,9 @@ export async function getRenderJobStatus(jobId: string): Promise<RenderJob> {
 
 export async function listProjectRenders(projectId: string): Promise<RenderOutput[]> {
   return apiClient<RenderOutput[]>(`/video-editor/projects/${projectId}/renders`);
+}
+
+export function getVideoProjectDownloadUrl(projectId: string, outputId?: string): string {
+  const base = API_BASE_URL.replace(/\/$/, "");
+  return `${base}/video-editor/projects/${projectId}/download${outputId ? `?output_id=${outputId}` : ""}`;
 }
