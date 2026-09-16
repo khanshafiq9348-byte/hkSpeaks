@@ -8,7 +8,6 @@ import {
   FolderKanban, 
   History, 
   KeyRound, 
-  CreditCard, 
   ShieldAlert, 
   LogOut, 
   Sparkles,
@@ -28,12 +27,10 @@ export default function Navbar() {
     { href: "/app/voices", label: "Voices", icon: Sparkles },
     { href: "/app/history", label: "History", icon: History },
     { href: "/app/api", label: "API", icon: KeyRound },
-    { href: "/app/billing", label: "Billing", icon: CreditCard },
   ];
 
   const videoLinks = [
     { href: "/video-editor", label: "Documentary Projects", icon: Film },
-    { href: "/app/billing", label: "Billing", icon: CreditCard },
   ];
 
   if (user?.role === "admin") {
@@ -128,10 +125,10 @@ export default function Navbar() {
                 Sign in
               </Link>
               <Link
-                href="/signup"
+                href="/app/studio"
                 className="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-colors"
               >
-                Get Started
+                Enter Studio
               </Link>
             </div>
           )}

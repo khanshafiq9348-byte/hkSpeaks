@@ -83,6 +83,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return res.user;
     } catch (e) {
       console.error("Demo login error:", e);
+      const fallbackUser: User = {
+        id: "free_creator_user",
+        email: "creator@hkspeaks.ai",
+        display_name: "HK Creator",
+        role: "creator"
+      };
+      login("free_unlimited_token", fallbackUser);
+      return fallbackUser;
     } finally {
       setIsLoading(false);
     }

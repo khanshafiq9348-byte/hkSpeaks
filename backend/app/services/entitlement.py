@@ -25,25 +25,21 @@ class EntitlementService:
             if plan:
                 return plan, subscription
 
-        # Fallback to Free Plan
-        free_plan_result = await db.execute(select(Plan).where(Plan.slug == "free"))
-        free_plan = free_plan_result.scalar_one_or_none()
-        if not free_plan:
-            # Dynamically construct if not yet seeded
-            free_plan = Plan(
-                id="default_free_plan",
-                name="Free Starter",
-                slug="free",
-                included_characters=10000,
-                included_seconds=300,
-                allow_cloning=False,
-                allow_premium_voices=False,
-                allow_api=False,
-                allow_commercial_use=False,
-                priority=1,
-                fair_use_limit=15000,
-                active=True
-            )
+        # Fallback to Unlimited Free Plan
+        free_plan = Plan(
+            id="default_free_plan",
+            name="Unlimited Free",
+            slug="unlimited",
+            included_characters=999999999,
+            included_seconds=9999999,
+            allow_cloning=True,
+            allow_premium_voices=True,
+            allow_api=True,
+            allow_commercial_use=True,
+            priority=1,
+            fair_use_limit=999999999,
+            active=True
+        )
         return free_plan, None
 
     @staticmethod
@@ -72,54 +68,28 @@ class EntitlementService:
         text_length: int
     ):
         """
-        Validates whether the user can generate speech for the requested voice and text length.
+        Validates whether the user can generate speech.
+        All voices (Standard, Premium, Ultra, Edge, ElevenLabs) and lengths are 100% free & unlimited.
         """
-        plan, _ = await EntitlementService.get_user_plan_and_subscription(db, user.id)
-
-        # 1. Voice tier entitlement check
-        if voice.tier in ["premium", "ultra"] and not plan.allow_premium_voices:
-            raise AppException(
-                status_code=403,
-                error_code=ErrorCode.PREMIUM_REQUIRED,
-                message=f"Voice '{voice.name}' is a {voice.tier.capitalize()} voice. Please upgrade your subscription to access premium voices.",
-                details={"required_tier": voice.tier, "current_plan": plan.name}
-            )
-
-        # 2. Private/custom voice entitlement check
+        # Private/custom voice check: only ensure user isn't using another user's private clone
         if voice.tier == "custom":
-            if voice.owner_user_id != user.id:
+            if voice.owner_user_id and voice.owner_user_id != user.id:
                 raise AppException(
                     status_code=403,
                     error_code=ErrorCode.FORBIDDEN,
                     message="You do not have permission to use this custom voice."
                 )
-
-        # 3. Quota / Fair-use check
-        current_chars = await EntitlementService.get_character_usage_this_period(db, user.id)
-        limit = plan.fair_use_limit if plan.slug == "unlimited" else plan.included_characters
-
-        if current_chars + text_length > limit:
-            raise AppException(
-                status_code=402,
-                error_code=ErrorCode.QUOTA_EXCEEDED,
-                message=f"Character quota exceeded. Plan limit is {limit:,} characters, currently used {current_chars:,}.",
-                details={
-                    "current_usage": current_chars,
-                    "request_chars": text_length,
-                    "limit": limit,
-                    "plan": plan.name
-                }
-            )
+        return
 
     @staticmethod
     async def can_clone_voice(db: AsyncSession, user_id: str) -> bool:
-        # Every user has access to 1 private cloned voice slot
+        # Voice cloning is completely free and unlimited
         return True
 
     @staticmethod
     async def can_use_api(db: AsyncSession, user_id: str) -> bool:
-        plan, _ = await EntitlementService.get_user_plan_and_subscription(db, user_id)
-        return plan.allow_api
+        # Developer API is completely free and unlimited
+        return True
 
     @staticmethod
     async def reserve_credit(db: AsyncSession, user_id: str, generation_id: str, characters: int):

@@ -11,7 +11,6 @@ import {
   FolderKanban,
   History,
   KeyRound,
-  CreditCard,
   Crown,
   ChevronDown,
   ChevronRight,
@@ -36,9 +35,6 @@ export default function Sidebar() {
   // Voices submenu accordion state
   const [isVoicesOpen, setIsVoicesOpen] = useState(true);
 
-  // Billing usage state for Upgrade card
-  const [usage, setUsage] = useState<any>(null);
-
   useEffect(() => {
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("hk_sidebar_collapsed");
@@ -46,7 +42,6 @@ export default function Sidebar() {
         setIsCollapsed(stored === "true");
       }
     }
-    loadUsage();
   }, []);
 
   const toggleCollapsed = () => {
@@ -54,15 +49,6 @@ export default function Sidebar() {
     setIsCollapsed(next);
     if (typeof window !== "undefined") {
       localStorage.setItem("hk_sidebar_collapsed", String(next));
-    }
-  };
-
-  const loadUsage = async () => {
-    try {
-      const data = await apiClient<any>("/billing/usage");
-      setUsage(data);
-    } catch {
-      // ignore
     }
   };
 
@@ -77,8 +63,6 @@ export default function Sidebar() {
   const isProjects = pathname.startsWith("/app/projects");
   const isHistory = pathname.startsWith("/app/history");
   const isApi = pathname.startsWith("/app/api");
-  const isBilling = pathname.startsWith("/app/billing");
-  const isPricing = pathname.startsWith("/pricing");
 
   return (
     <aside
@@ -318,24 +302,6 @@ export default function Sidebar() {
           {!isCollapsed && <span className="text-sm font-medium">API / Developer API</span>}
         </Link>
 
-        {/* Billing */}
-        <Link
-          href="/app/billing"
-          title="Billing"
-          className={`flex items-center rounded-xl transition-all ${
-            isCollapsed
-              ? "justify-center p-3"
-              : "space-x-3 px-3.5 py-2.5"
-          } ${
-            isBilling
-              ? "bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30"
-              : "text-gray-300 hover:text-white hover:bg-[#141726]"
-          }`}
-        >
-          <CreditCard className="w-4 h-4 flex-shrink-0" />
-          {!isCollapsed && <span className="text-sm font-medium">Billing</span>}
-        </Link>
-
         {/* Admin Link if admin */}
         {user?.role === "admin" && (
           <Link
@@ -357,62 +323,8 @@ export default function Sidebar() {
         )}
       </nav>
 
-      {/* 4. Bottom Section: Upgrade Plan & User Info */}
-      <div className="p-3 border-t border-[#1C2033] space-y-2">
-        {/* Upgrade Plan Card */}
-        {!isCollapsed ? (
-          <div className="p-3 rounded-xl bg-gradient-to-br from-[#181B2E] to-[#121422] border border-[#262C47] shadow-inner space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-1.5 text-xs font-semibold text-white">
-                <Crown className="w-3.5 h-3.5 text-amber-400" />
-                <span>{usage?.plan_name || "Free Tier"}</span>
-              </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold">
-                Active
-              </span>
-            </div>
-
-            {/* Characters info */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[11px] text-gray-400">
-                <span>Credits remaining</span>
-                <span className="text-gray-200 font-medium">
-                  {usage ? (usage.characters_remaining ?? usage.characters_limit).toLocaleString() : "10,000"}
-                </span>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-[#20253D] overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-indigo-500 to-purple-500"
-                  style={{
-                    width: usage && usage.characters_limit > 0
-                      ? `${Math.max(5, Math.min(100, ((usage.characters_limit - usage.characters_used) / usage.characters_limit) * 100))}%`
-                      : "80%"
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Upgrade CTA Button */}
-            <Link
-              href="/pricing"
-              className="w-full flex items-center justify-center space-x-1.5 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white shadow-md shadow-indigo-600/25 hover:opacity-95 transition-opacity"
-            >
-              <Crown className="w-3 h-3 text-amber-300" />
-              <span>Upgrade Plan</span>
-            </Link>
-          </div>
-        ) : (
-          <div className="flex justify-center">
-            <Link
-              href="/pricing"
-              title="Upgrade Plan"
-              className="p-2.5 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/30 hover:scale-105 transition-transform"
-            >
-              <Crown className="w-4 h-4 text-amber-300" />
-            </Link>
-          </div>
-        )}
-
+      {/* 4. Bottom Section: User Info & Logout */}
+      <div className="p-3 border-t border-[#1C2033]">
         {/* User profile & Logout */}
         {user ? (
           <div className={`flex items-center ${isCollapsed ? "justify-center" : "justify-between"} pt-1`}>
