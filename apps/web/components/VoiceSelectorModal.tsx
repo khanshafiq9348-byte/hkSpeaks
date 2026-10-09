@@ -18,10 +18,11 @@ import {
   Layers, 
   Cpu, 
   CheckCircle2,
-  RotateCcw
+  RotateCcw,
+  Users
 } from "lucide-react";
 import Link from "next/link";
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, getPlayableAudioUrl } from "@/lib/api";
 import UploadedVoiceModal from "./UploadedVoiceModal";
 
 export interface Voice {
@@ -47,6 +48,28 @@ export interface Voice {
   created_at?: string;
 }
 
+export const getVoiceStyles = (v: { styles?: any; style?: any } | null | undefined): string[] => {
+  if (!v) return ["Conversational"];
+  if (Array.isArray(v.styles) && v.styles.length > 0) {
+    const list = v.styles.filter((s): s is string => typeof s === "string" && Boolean(s.trim()));
+    if (list.length > 0) return list;
+  }
+  if (typeof v.styles === "string" && v.styles.trim()) {
+    const list = v.styles.split(",").map((s) => s.trim()).filter(Boolean);
+    if (list.length > 0) return list;
+  }
+  if (typeof v.style === "string" && v.style.trim()) {
+    const list = v.style.split(",").map((s) => s.trim()).filter(Boolean);
+    if (list.length > 0) return list;
+  }
+  return ["Conversational"];
+};
+
+export const isClonedVoice = (v: Voice | null | undefined): boolean => {
+  if (!v) return false;
+  return v.tier === "custom" || v.voice_type === "clone" || v.type === "cloned" || Boolean(v.owner_user_id);
+};
+
 interface VoiceSelectorModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -57,7 +80,7 @@ interface VoiceSelectorModalProps {
   initialCategory?: string;
 }
 
-const LANGUAGE_NAMES: Record<string, string> = {
+export const LANGUAGE_NAMES: Record<string, string> = {
   en: "English",
   es: "Spanish",
   fr: "French",
@@ -123,6 +146,7 @@ export default function VoiceSelectorModal({
   const [activeCategoryTab, setActiveCategoryTab] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [selectedProvider, setSelectedProvider] = useState<string>("all");
+  const [selectedGender, setSelectedGender] = useState<string>("all");
   const [selectedStyle, setSelectedStyle] = useState<string>("all");
   const [selectedLanguage, setSelectedLanguage] = useState<string>("all");
   const [selectedTier, setSelectedTier] = useState<string>("all");
@@ -196,8 +220,8 @@ export default function VoiceSelectorModal({
   // Compute unique languages available
   const availableLanguages = useMemo(() => {
     const langSet = new Set<string>();
-    voices.forEach((v) => {
-      if (v.language) langSet.add(v.language.toLowerCase());
+    (voices || []).forEach((v) => {
+      if (v?.language) langSet.add(v.language.toLowerCase());
     });
     return Array.from(langSet).sort();
   }, [voices]);
@@ -205,16 +229,137 @@ export default function VoiceSelectorModal({
   // Compute unique providers available
   const availableProviders = useMemo(() => {
     const pSet = new Set<string>();
-    voices.forEach((v) => {
-      if (v.provider) pSet.add(v.provider.toLowerCase());
+    (voices || []).forEach((v) => {
+      if (v?.provider) pSet.add(v.provider.toLowerCase());
     });
     return Array.from(pSet).sort();
   }, [voices]);
 
-  // Helper to test if a voice is cloned
-  const isClonedVoice = (v: Voice): boolean => {
-    return v.tier === "custom" || v.voice_type === "clone" || v.type === "cloned" || Boolean(v.owner_user_id);
-  };
+  // Compute gender counts from verified voices
+  const genderCounts = useMemo(() => {
+    let male = 0;
+    let female = 0;
+    (voices || []).forEach((v) => {
+      if (!v) return;
+      const g = (v.gender || "").toLowerCase();
+      if (g === "male") male++;
+      else if (g === "female") female++;
+    });
+    return { male, female, total: voices?.length || 0 };
+  }, [voices]);
+
+  // Compute dynamic styles and counts from verified voices
+  const availableStyles = useMemo(() => {
+    const styleCountMap: Record<string, number> = {};
+    (voices || []).forEach((v) => {
+      if (!v) return;
+      const list = getVoiceStyles(v);
+      list.forEach((s) => {
+        if (s) {
+          styleCountMap[s] = (styleCountMap[s] || 0) + 1;
+        }
+      });
+    });
+
+    const canonicalOrder = [
+      "Documentary",
+      "Storytelling",
+      "Cinematic",
+      "Narration",
+      "News",
+      "Conversational",
+      "Character",
+      "Educational",
+      "Commercial",
+    ];
+    const ordered: { id: string; label: string; count: number }[] = [];
+
+    canonicalOrder.forEach((cat) => {
+      if (styleCountMap[cat]) {
+        ordered.push({ id: cat, label: `${cat} (${styleCountMap[cat]})`, count: styleCountMap[cat] });
+        delete styleCountMap[cat];
+      }
+    });
+
+    Object.entries(styleCountMap)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([st, cnt]) => {
+        ordered.push({ id: st, label: `${st} (${cnt})`, count: cnt });
+      });
+
+    return [{ id: "all", label: `All Styles (${voices?.length || 0})`, count: voices?.length || 0 }, ...ordered];
+  }, [voices]);
+
+  // Compute dynamic language counts and options
+  const dynamicLanguages = useMemo(() => {
+    const counts: Record<string, number> = {};
+    (voices || []).forEach((v) => {
+      if (!v) return;
+      const l = (v.language || "").toLowerCase();
+      if (l) counts[l] = (counts[l] || 0) + 1;
+    });
+
+    return availableLanguages.map((l) => ({
+      code: l,
+      name: LANGUAGE_NAMES[l] || l.toUpperCase(),
+      count: counts[l] || 0,
+    })).sort((a, b) => b.count - a.count);
+  }, [availableLanguages, voices]);
+
+  // Compute dynamic providers with live counts
+  const dynamicProviders = useMemo(() => {
+    const pCounts: Record<string, number> = {};
+    (voices || []).forEach((v) => {
+      if (!v) return;
+      const isClone = isClonedVoice(v);
+      const pKey = isClone ? "cloned" : (v.provider || "edge").toLowerCase();
+      pCounts[pKey] = (pCounts[pKey] || 0) + 1;
+    });
+
+    const providerNames: Record<string, string> = {
+      edge: "Edge TTS (Microsoft Neural)",
+      elevenlabs: "ElevenLabs",
+      azure: "Azure Speech",
+      openai: "OpenAI",
+      amazon: "Amazon Polly",
+      google: "Google Cloud",
+      cloned: "Your Cloned Voices",
+    };
+
+    return Object.entries(pCounts).map(([p, cnt]) => ({
+      id: p,
+      label: `${providerNames[p] || p.toUpperCase()} (${cnt})`,
+      count: cnt,
+    })).sort((a, b) => b.count - a.count);
+  }, [voices]);
+
+  // Compute dynamic tiers with live counts
+  const dynamicTiers = useMemo(() => {
+    const tierCounts: Record<string, number> = {};
+    (voices || []).forEach((v) => {
+      if (!v) return;
+      const isClone = isClonedVoice(v);
+      const t = isClone ? "custom" : (v.tier || "standard").toLowerCase();
+      tierCounts[t] = (tierCounts[t] || 0) + 1;
+    });
+
+    const tierLabels: Record<string, string> = {
+      standard: "Standard Tier",
+      premium: "Premium Tier",
+      ultra: "Ultra Tier",
+      free: "Free Tier",
+      custom: "Your Clone (Private)",
+    };
+
+    const order = ["standard", "premium", "ultra", "free", "custom"];
+    return order
+      .filter((t) => tierCounts[t])
+      .map((t) => ({
+        id: t,
+        label: `${tierLabels[t] || t} (${tierCounts[t]})`,
+        count: tierCounts[t],
+      }));
+  }, [voices]);
 
   // Filtered voices
   const filteredVoices = useMemo(() => {
@@ -233,6 +378,13 @@ export default function VoiceSelectorModal({
         if (selectedProvider === "cloned") {
           if (!isClone) return false;
         } else if (v.provider?.toLowerCase() !== selectedProvider.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // Gender filter (Male / Female / All)
+      if (selectedGender !== "all") {
+        if ((v.gender || "").toLowerCase() !== selectedGender.toLowerCase()) {
           return false;
         }
       }
@@ -256,8 +408,8 @@ export default function VoiceSelectorModal({
       // Style filter
       if (selectedStyle !== "all") {
         const sTarget = selectedStyle.toLowerCase();
-        const vStyles = (v.styles || []).map((s: string) => s.toLowerCase());
-        const matchesStyleTag = vStyles.some((s: string) => s.includes(sTarget)) || (v.style || "").toLowerCase().includes(sTarget);
+        const vStyles = getVoiceStyles(v).map((s) => s.toLowerCase());
+        const matchesStyleTag = vStyles.some((s) => s.includes(sTarget)) || (v.style || "").toLowerCase().includes(sTarget);
         if (!matchesStyleTag) return false;
       }
 
@@ -265,23 +417,24 @@ export default function VoiceSelectorModal({
       if (search.trim()) {
         const q = search.toLowerCase().trim();
         const langFriendly = LANGUAGE_NAMES[v.language?.toLowerCase()] || "";
+        const vStyles = getVoiceStyles(v);
         const matches =
-          v.name.toLowerCase().includes(q) ||
-          v.accent?.toLowerCase().includes(q) ||
-          v.style?.toLowerCase().includes(q) ||
-          (v.styles && v.styles.some((s) => s.toLowerCase().includes(q))) ||
-          v.language?.toLowerCase().includes(q) ||
-          v.locale?.toLowerCase().includes(q) ||
+          (v.name && v.name.toLowerCase().includes(q)) ||
+          (v.accent && v.accent.toLowerCase().includes(q)) ||
+          (v.style && v.style.toLowerCase().includes(q)) ||
+          vStyles.some((s) => s.toLowerCase().includes(q)) ||
+          (v.language && v.language.toLowerCase().includes(q)) ||
+          (v.locale && v.locale.toLowerCase().includes(q)) ||
           langFriendly.toLowerCase().includes(q) ||
-          v.provider?.toLowerCase().includes(q) ||
-          v.description?.toLowerCase().includes(q) ||
-          v.gender?.toLowerCase().includes(q);
+          (v.provider && v.provider.toLowerCase().includes(q)) ||
+          (v.description && v.description.toLowerCase().includes(q)) ||
+          (v.gender && v.gender.toLowerCase().includes(q));
         if (!matches) return false;
       }
 
       return true;
     });
-  }, [voices, activeCategoryTab, selectedProvider, selectedLanguage, selectedTier, selectedStyle, search]);
+  }, [voices, activeCategoryTab, selectedProvider, selectedGender, selectedLanguage, selectedTier, selectedStyle, search]);
 
   // Audio preview handler
   const handlePlayPreview = (voiceId: string, customUrl?: string) => {
@@ -299,7 +452,7 @@ export default function VoiceSelectorModal({
     }
 
     // Determine preview URL
-    const targetUrl = customUrl || `${API_BASE_URL}/voices/${voiceId}/preview`;
+    const targetUrl = customUrl ? (getPlayableAudioUrl(customUrl) || customUrl) : `${API_BASE_URL}/voices/${voiceId}/preview`;
     const audio = new Audio(targetUrl);
     audioRef.current = audio;
 
@@ -348,6 +501,7 @@ export default function VoiceSelectorModal({
     setActiveCategoryTab("all");
     setSearch("");
     setSelectedProvider("all");
+    setSelectedGender("all");
     setSelectedStyle("all");
     setSelectedLanguage("all");
     setSelectedTier("all");
@@ -571,8 +725,8 @@ export default function VoiceSelectorModal({
             )}
           </div>
 
-          {/* Filter Dropdowns Row: Provider, Style, Language, Type/Tier, Reset */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+          {/* Filter Dropdowns Row: Provider, Gender, Style, Language, Type/Tier, Reset */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
             {/* 1. Provider Filter */}
             <div className="flex flex-col space-y-1">
               <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 flex items-center space-x-1">
@@ -584,21 +738,33 @@ export default function VoiceSelectorModal({
                 onChange={(e) => setSelectedProvider(e.target.value)}
                 className="w-full px-2.5 py-1.5 bg-[#121524] border border-[#22273D] rounded-lg text-xs text-gray-200 focus:outline-none focus:border-indigo-500 capitalize"
               >
-                <option value="all">All Providers</option>
-                <option value="edge">Edge TTS (Microsoft Neural)</option>
-                <option value="elevenlabs">ElevenLabs</option>
-                <option value="cloned">Your Cloned Voices</option>
-                {availableProviders
-                  .filter((p) => !["edge", "elevenlabs", "cloned"].includes(p))
-                  .map((p) => (
-                    <option key={p} value={p}>
-                      {p.toUpperCase()}
-                    </option>
-                  ))}
+                <option value="all">All Providers ({voices.length})</option>
+                {dynamicProviders.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
               </select>
             </div>
 
-            {/* 2. Voice Style Filter */}
+            {/* 2. Gender Filter */}
+            <div className="flex flex-col space-y-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 flex items-center space-x-1">
+                <Users className="w-3 h-3 text-emerald-400" />
+                <span>Gender</span>
+              </label>
+              <select
+                value={selectedGender}
+                onChange={(e) => setSelectedGender(e.target.value)}
+                className="w-full px-2.5 py-1.5 bg-[#121524] border border-[#22273D] rounded-lg text-xs text-gray-200 focus:outline-none focus:border-indigo-500"
+              >
+                <option value="all">All Genders ({genderCounts.total})</option>
+                <option value="male">Male ({genderCounts.male})</option>
+                <option value="female">Female ({genderCounts.female})</option>
+              </select>
+            </div>
+
+            {/* 3. Voice Style Filter */}
             <div className="flex flex-col space-y-1">
               <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 flex items-center space-x-1">
                 <Sparkles className="w-3 h-3 text-pink-400" />
@@ -609,7 +775,7 @@ export default function VoiceSelectorModal({
                 onChange={(e) => setSelectedStyle(e.target.value)}
                 className="w-full px-2.5 py-1.5 bg-[#121524] border border-[#22273D] rounded-lg text-xs text-gray-200 focus:outline-none focus:border-indigo-500"
               >
-                {STYLE_OPTIONS.map((st) => (
+                {availableStyles.map((st) => (
                   <option key={st.id} value={st.id}>
                     {st.label}
                   </option>
@@ -617,7 +783,7 @@ export default function VoiceSelectorModal({
               </select>
             </div>
 
-            {/* 3. Language Filter */}
+            {/* 4. Language Filter */}
             <div className="flex flex-col space-y-1">
               <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 flex items-center space-x-1">
                 <Globe className="w-3 h-3 text-sky-400" />
@@ -628,25 +794,12 @@ export default function VoiceSelectorModal({
                 onChange={(e) => setSelectedLanguage(e.target.value)}
                 className="w-full px-2.5 py-1.5 bg-[#121524] border border-[#22273D] rounded-lg text-xs text-gray-200 focus:outline-none focus:border-indigo-500 capitalize"
               >
-                <option value="all">All Languages ({availableLanguages.length})</option>
-                <option value="en">English (Global)</option>
-                <option value="es">Spanish (Español)</option>
-                <option value="fr">French (Français)</option>
-                <option value="de">German (Deutsch)</option>
-                <option value="hi">Hindi (हिन्दी)</option>
-                <option value="ar">Arabic (العربية)</option>
-                <option value="ur">Urdu (اردو)</option>
-                <option value="tr">Turkish (Türkçe)</option>
-                <option value="ja">Japanese (日本語)</option>
-                <option value="pt">Portuguese</option>
-                <option value="it">Italian</option>
-                {availableLanguages
-                  .filter((l) => !["en", "es", "fr", "de", "hi", "ar", "ur", "tr", "ja", "pt", "it"].includes(l))
-                  .map((l) => (
-                    <option key={l} value={l}>
-                      {LANGUAGE_NAMES[l] || l.toUpperCase()} ({l})
-                    </option>
-                  ))}
+                <option value="all">All Languages ({dynamicLanguages.length})</option>
+                {dynamicLanguages.map((lang) => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.name} ({lang.count})
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -661,12 +814,12 @@ export default function VoiceSelectorModal({
                 onChange={(e) => setSelectedTier(e.target.value)}
                 className="w-full px-2.5 py-1.5 bg-[#121524] border border-[#22273D] rounded-lg text-xs text-gray-200 focus:outline-none focus:border-indigo-500 capitalize"
               >
-                <option value="all">All Tiers & Types</option>
-                <option value="free">Free Tier</option>
-                <option value="standard">Standard Tier</option>
-                <option value="premium">Premium Tier</option>
-                <option value="ultra">Ultra Tier</option>
-                <option value="custom">Your Clone (Private)</option>
+                <option value="all">All Tiers & Types ({voices.length})</option>
+                {dynamicTiers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
               </select>
             </div>
 

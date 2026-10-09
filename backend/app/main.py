@@ -64,13 +64,8 @@ app = FastAPI(
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000"
-    ],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=["*"],
+    allow_origin_regex=r"^https?://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -157,6 +152,15 @@ app.include_router(projects_router, prefix=settings.API_V1_STR)
 app.include_router(storage_router, prefix=settings.API_V1_STR)
 app.include_router(video_editor_router, prefix=settings.API_V1_STR)
 app.include_router(image_prompts_router, prefix=settings.API_V1_STR)
+
+# Direct Route Aliases (/api/voice/upload, /voice/upload, /api/voice/generate, /voice/generate)
+from app.api.v1.voices import create_voice_clone
+from app.api.v1.tts import generate_speech
+
+app.post("/api/voice/upload", tags=["Voice Aliases"])(create_voice_clone)
+app.post("/voice/upload", tags=["Voice Aliases"])(create_voice_clone)
+app.post("/api/voice/generate", tags=["Voice Aliases"])(generate_speech)
+app.post("/voice/generate", tags=["Voice Aliases"])(generate_speech)
 
 # Mount Health check at root
 app.include_router(health_router)

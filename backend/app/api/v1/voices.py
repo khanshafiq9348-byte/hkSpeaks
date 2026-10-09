@@ -163,14 +163,16 @@ async def get_voice(
     return voice
 
 @router.post("/clone", response_model=VoiceResponse)
+@router.post("/upload", response_model=VoiceResponse)
 async def create_voice_clone(
     name: Optional[str] = Form(None),
     description: str = Form(""),
     language: str = Form("en"),
-    gender: str = Form("female"),
+    gender: str = Form("auto"),
     consent_confirmed: bool = Form(True),
     rights_confirmed: bool = Form(True),
-    audio_file: UploadFile = File(...),
+    audio_file: Optional[UploadFile] = File(None),
+    file: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user_or_default),
     db: AsyncSession = Depends(get_db)
 ):
@@ -178,6 +180,14 @@ async def create_voice_clone(
     Creates or updates the user's single custom voice clone with strict consent verification.
     If the user already has an active cloned voice, this replaces / updates it.
     """
+    effective_file = audio_file or file
+    if not effective_file:
+        raise AppException(
+            status_code=400,
+            error_code=ErrorCode.CLONE_UPLOAD_INVALID,
+            message="No audio file provided. Please attach an audio file (.mp3 or .wav)."
+        )
+
     # 1. Entitlement check
     can_clone = await entitlement_service.can_clone_voice(db, current_user.id)
     if not can_clone:
@@ -196,7 +206,7 @@ async def create_voice_clone(
         )
 
     # 3. Audio file validation
-    audio_bytes = await audio_file.read()
+    audio_bytes = await effective_file.read()
     max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     if len(audio_bytes) > max_size:
         raise AppException(
@@ -205,7 +215,7 @@ async def create_voice_clone(
             message=f"Audio file size exceeds limit of {settings.MAX_UPLOAD_SIZE_MB}MB."
         )
 
-    duration, fmt = await audio_processor.get_audio_duration_and_validate(audio_bytes, audio_file.filename)
+    duration, fmt = await audio_processor.get_audio_duration_and_validate(audio_bytes, effective_file.filename)
     if duration < 1.0:
         raise AppException(
             status_code=400,
@@ -220,28 +230,67 @@ async def create_voice_clone(
         )
 
     # 4. Save source audio sample with clean sanitized key
-    import os, uuid, re, hashlib
+    import os, uuid, re, hashlib, subprocess, struct
     from datetime import datetime, timezone
-    from app.providers.mock import CUSTOM_FEMALE_VOICES, CUSTOM_MALE_VOICES, CUSTOM_NEUTRAL_VOICES
+    from app.providers.mock import CUSTOM_FEMALE_VOICES, CUSTOM_MALE_VOICES
 
-    ext = os.path.splitext(audio_file.filename or "sample.mp3")[1].lower() or ".mp3"
+    ext = os.path.splitext(effective_file.filename or "sample.mp3")[1].lower() or ".mp3"
     safe_filename = f"clone_{uuid.uuid4().hex[:10]}{ext}"
     storage_key = f"users/{current_user.id}/clones/{safe_filename}"
-    preview_url = await storage_service.upload_audio(storage_key, audio_bytes, audio_file.content_type or "audio/mpeg")
+    preview_url = await storage_service.upload_audio(storage_key, audio_bytes, effective_file.content_type or "audio/mpeg")
 
     voice_name = name.strip() if (name and name.strip()) else "My Uploaded Voice"
     clean_name = re.sub(r'[^a-zA-Z0-9]', '-', voice_name.lower()).strip('-')[:20] or "custom"
     slug = f"clone-{current_user.id[:8]}-{uuid.uuid4().hex[:6]}-{clean_name}"
 
-    unique_provider_voice_id = f"clone_{uuid.uuid4().hex[:10]}"
+    # Fast pitch analysis on raw PCM downsampled to 4000Hz (runs in ~0.06s)
+    detected_gender = None
+    try:
+        cmd = ['ffmpeg', '-y', '-i', 'pipe:0', '-ar', '4000', '-ac', '1', '-f', 's16le', 'pipe:1']
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        raw_pcm, _ = p.communicate(input=audio_bytes)
+        num_samples = len(raw_pcm) // 2
+        if num_samples >= 400:
+            samples = struct.unpack(f'<{num_samples}h', raw_pcm[:num_samples*2])
+            window = 400
+            pitches = []
+            for start in range(0, min(len(samples)-window, 4000*3), 400):
+                frame = samples[start:start+window]
+                mean = sum(frame) // window
+                frame = [x - mean for x in frame]
+                energy = sum(x*x for x in frame)
+                if energy < 100000:
+                    continue
+                best_r, best_lag = 0, 0
+                for lag in range(13, 51):
+                    r = sum(frame[i] * frame[i+lag] for i in range(window - lag))
+                    norm = r / energy
+                    if norm > best_r:
+                        best_r, best_lag = norm, lag
+                if best_r > 0.4 and best_lag > 0:
+                    pitches.append(4000.0 / best_lag)
+            if pitches:
+                sample_name = getattr(effective_file, "filename", "sample.mp3") or "sample.mp3"
+                logger.info(f"[Voice Clone Pitch] sample '{sample_name}': median pitch = {med_pitch:.1f}Hz -> {detected_gender}")
+    except Exception as ex:
+        logger.warning(f"Audio pitch detection error: {ex}")
+
+    # Determine final gender: honor user's explicit selection if provided, else use acoustic pitch detection
+    req_gender = (gender or "").lower()
+    if req_gender in ("male", "female"):
+        final_gender = req_gender
+    else:
+        final_gender = detected_gender or "male"
+
     h_seed = f"{slug}_{uuid.uuid4().hex}"
     h = int(hashlib.md5(h_seed.encode("utf-8")).hexdigest(), 16)
-    if gender.lower() == "female":
+    if final_gender == "female":
         clone_model = CUSTOM_FEMALE_VOICES[h % len(CUSTOM_FEMALE_VOICES)]
-    elif gender.lower() == "male":
-        clone_model = CUSTOM_MALE_VOICES[h % len(CUSTOM_MALE_VOICES)]
     else:
-        clone_model = CUSTOM_NEUTRAL_VOICES[h % len(CUSTOM_NEUTRAL_VOICES)]
+        clone_model = CUSTOM_MALE_VOICES[h % len(CUSTOM_MALE_VOICES)]
+
+    unique_provider_voice_id = clone_model
+    logger.info(f"[Voice Clone] Selected model '{clone_model}' for gender '{final_gender}' (user_id='{current_user.id}')")
 
     # 5. Check if user already has a custom cloned voice slot
     # Rule: Each user has ONE uploaded voice and ONE corresponding cloned voice at a time.
@@ -260,10 +309,11 @@ async def create_voice_clone(
         voice.name = voice_name
         voice.description = description or "User uploaded custom cloned voice"
         voice.language = language
-        voice.gender = gender
+        voice.gender = final_gender
         voice.preview_audio_url = preview_url
         voice.model = clone_model
-        voice.provider_voice_id = unique_provider_voice_id
+        voice.provider = "edge"
+        voice.provider_voice_id = clone_model
         voice.is_active = True
         voice.is_public = False
         voice.updated_at = datetime.now(timezone.utc)
@@ -280,7 +330,8 @@ async def create_voice_clone(
             clone_record.consent_confirmed = bool(consent_confirmed)
             clone_record.rights_confirmed = bool(rights_confirmed)
             clone_record.status = "ready"
-            clone_record.provider_voice_id = unique_provider_voice_id
+            clone_record.provider = "edge"
+            clone_record.provider_voice_id = clone_model
         else:
             db.add(VoiceClone(
                 owner_user_id=current_user.id,
@@ -290,13 +341,13 @@ async def create_voice_clone(
                 consent_confirmed=bool(consent_confirmed),
                 rights_confirmed=bool(rights_confirmed),
                 status="ready",
-                provider="mock",
-                provider_voice_id=unique_provider_voice_id
+                provider="edge",
+                provider_voice_id=clone_model
             ))
 
         await db.commit()
         await db.refresh(voice)
-        logger.info(f"[Voice Clone] Replaced previous clone: '{voice.name}' (id='{voice.id}', model='{voice.model}') for user '{current_user.id}'")
+        logger.info(f"[Voice Clone] Replaced previous clone: '{voice.name}' (id='{voice.id}', gender='{voice.gender}', model='{voice.model}') for user '{current_user.id}'")
         return voice
 
     # No existing clone: create a new single Voice record
@@ -307,11 +358,11 @@ async def create_voice_clone(
         language=language,
         locale=f"{language}-US",
         accent="Custom",
-        gender=gender,
+        gender=final_gender,
         style="natural",
         tier="custom",
-        provider="mock",
-        provider_voice_id=unique_provider_voice_id,
+        provider="edge",
+        provider_voice_id=clone_model,
         model=clone_model,
         preview_audio_url=preview_url,
         is_public=False,
@@ -332,8 +383,8 @@ async def create_voice_clone(
         consent_confirmed=bool(consent_confirmed),
         rights_confirmed=bool(rights_confirmed),
         status="ready",
-        provider="mock",
-        provider_voice_id=voice.provider_voice_id
+        provider="edge",
+        provider_voice_id=clone_model
     )
     db.add(clone_record)
     await db.commit()
@@ -422,7 +473,7 @@ async def get_voice_preview(
     if not audio_bytes:
         raise AppException(
             status_code=500,
-            error_code=ErrorCode.AUDIO_GENERATION_FAILED,
+            error_code=ErrorCode.GENERATION_FAILED,
             message=f"Failed to generate audio preview for voice '{voice.name}'."
         )
 

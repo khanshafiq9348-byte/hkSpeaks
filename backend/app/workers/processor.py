@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.session import async_session_maker
-from app.models.entities import Generation, Voice, UsageRecord
+from app.models.entities import Generation, Voice, UsageRecord, VoiceClone
 from app.providers.router import tts_router
 from app.providers.base import TTSRequest
 from app.audio.processor import audio_processor
@@ -17,11 +17,15 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-def split_text_into_chunks(text: str, max_chunk_size: int = 1000) -> List[str]:
+def split_text_into_chunks(text: str, max_chunk_size: int = settings.DEFAULT_CHUNK_SIZE_CHARS) -> List[str]:
     """
     Splits long scripts into clean chunks respecting sentence boundaries and paragraphs.
+    Never splits scripts shorter than max_chunk_size (4500 chars).
+    Splits strictly at paragraph breaks or sentence terminators (. ! ?).
     """
     text = text.strip()
+    if not text:
+        return []
     if len(text) <= max_chunk_size:
         return [text]
 
@@ -94,35 +98,50 @@ async def process_generation_job(generation_id: str):
             total_estimated_cost = 0.0
 
             settings_data = gen.settings_json or {}
-            speed = float(settings_data.get("speed", 0.9))
+            speed = float(settings_data.get("speed", 1.0))
             pitch = float(settings_data.get("pitch", 0.0))
-            volume = float(settings_data.get("volume", 100.0))
+            volume = float(settings_data.get("volume", 0.0))
             style = float(settings_data.get("style", 0.0))
             stability = float(settings_data.get("stability", 0.5))
             similarity = float(settings_data.get("similarity", 0.75))
+            expressiveness = float(settings_data.get("expressiveness", 0.7))
+            diversity = float(settings_data.get("diversity", 0.7))
             is_cloned_voice = bool(voice.tier == "custom" or voice.owner_user_id)
+            effective_model = gen.model or voice.model
+            effective_provider_voice_id = voice.provider_voice_id
+
+            if is_cloned_voice:
+                vc_res = await db.execute(select(VoiceClone).where(VoiceClone.voice_id == voice.id))
+                clone_rec = vc_res.scalar_one_or_none()
+                if clone_rec and clone_rec.provider_voice_id and not clone_rec.provider_voice_id.startswith("clone_"):
+                    effective_provider_voice_id = clone_rec.provider_voice_id
+                    if not effective_model or effective_model in ("en-US-GuyNeural", "en-US-JennyNeural"):
+                        effective_model = clone_rec.provider_voice_id
 
             logger.info(
                 f"[TTS Trace Worker] Processing generation '{gen.id}' with voice '{voice.name}' "
-                f"(id='{voice.id}', tier='{voice.tier}', model='{voice.model}', provider='{voice.provider}') - "
-                f"Controls: speed={speed}x, pitch={pitch}, volume={volume}%"
+                f"(id='{voice.id}', tier='{voice.tier}', model='{effective_model}', provider='{voice.provider}', "
+                f"provider_voice_id='{effective_provider_voice_id}') - "
+                f"Controls: speed={speed}x, pitch={pitch}, volume={volume}dB, expressiveness={expressiveness}, diversity={diversity}"
             )
 
             for chunk_text in chunks:
                 req = TTSRequest(
                     text=chunk_text,
                     voice_id=voice.id,
-                    provider_voice_id=voice.provider_voice_id,
+                    provider_voice_id=effective_provider_voice_id,
                     language=voice.language,
                     locale=voice.locale,
                     gender=voice.gender,
-                    model=gen.model or voice.model,
+                    model=effective_model,
                     speed=speed,
                     pitch=pitch,
                     volume=volume,
                     style=style,
                     stability=stability,
                     similarity=similarity,
+                    expressiveness=expressiveness,
+                    diversity=diversity,
                     format=gen.format,
                     tier=voice.tier,
                     is_clone=is_cloned_voice
@@ -203,15 +222,53 @@ async def process_generation_job(generation_id: str):
             except Exception as rollback_err:
                 logger.error(f"Failed to record generation failure: {rollback_err}")
 
+# 5-Hour Auto-Delete Lifecycle Purge
+async def purge_expired_generations(older_than_hours: float = 5.0) -> int:
+    """
+    Purges generated voice-overs older than 5 hours.
+    Deletes both the audio files from storage and database records.
+    """
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+    purged_count = 0
+
+    async with async_session_maker() as db:
+        try:
+            stmt = select(Generation).where(Generation.created_at <= cutoff)
+            res = await db.execute(stmt)
+            expired_gens = res.scalars().all()
+
+            for gen in expired_gens:
+                if gen.storage_key:
+                    try:
+                        await storage_service.delete_audio(gen.storage_key)
+                    except Exception as storage_err:
+                        logger.warning(f"[Auto-Purge] Failed to delete audio file {gen.storage_key}: {storage_err}")
+
+                await db.delete(gen)
+                purged_count += 1
+
+            if purged_count > 0:
+                await db.commit()
+                logger.info(f"[Auto-Purge] Successfully purged {purged_count} voice generations older than {older_than_hours}h.")
+        except Exception as e:
+            logger.error(f"[Auto-Purge] Error during auto-delete lifecycle purge: {e}")
+            await db.rollback()
+
+    return purged_count
+
 # In-memory queue worker for immediate asynchronous background execution
 class GenerationQueue:
     def __init__(self):
         self._queue: asyncio.Queue = asyncio.Queue()
         self._worker_task: asyncio.Task = None
+        self._cleanup_task: asyncio.Task = None
 
     async def start(self):
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._worker_loop())
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
     async def enqueue(self, generation_id: str):
         await self._queue.put(generation_id)
@@ -229,5 +286,23 @@ class GenerationQueue:
             except Exception as e:
                 logger.error(f"Error in generation worker queue: {e}")
                 await asyncio.sleep(1.0)
+
+    async def _cleanup_loop(self):
+        # Initial cleanup run
+        try:
+            await purge_expired_generations(older_than_hours=5.0)
+        except Exception:
+            pass
+
+        while True:
+            try:
+                # Check for expired voice generations every 10 minutes
+                await asyncio.sleep(600)
+                await purge_expired_generations(older_than_hours=5.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[Auto-Purge] Error in periodic cleanup loop: {e}")
+                await asyncio.sleep(60)
 
 generation_queue = GenerationQueue()

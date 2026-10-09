@@ -26,11 +26,11 @@ FRONTEND_DIR = ROOT_DIR / "apps" / "web"
 VENV_PYTHON = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
 VENV_PYTHONW = BACKEND_DIR / ".venv" / "Scripts" / "pythonw.exe"
 
-BACKEND_HOST = "127.0.0.1"
+BACKEND_HOST = "0.0.0.0"
 BACKEND_PORT = 8000
 FRONTEND_PORT = 3000
 
-BACKEND_HEALTH_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/health"
+BACKEND_HEALTH_URL = f"http://127.0.0.1:{BACKEND_PORT}/health"
 FRONTEND_HEALTH_URL = f"http://localhost:{FRONTEND_PORT}"
 
 PID_FILE = ROOT_DIR / "data" / "supervisor.pid"
@@ -53,6 +53,29 @@ def log_msg(msg: str):
     except Exception:
         pass
 
+_global_mutex = None
+
+def acquire_single_instance_lock() -> bool:
+    """
+    Acquires a system-wide named mutex on Windows.
+    Guarantees ONLY ONE supervisor instance can run at a time across the entire OS.
+    """
+    global _global_mutex
+    if _global_mutex is not None:
+        return True
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        mutex_name = "Local\\HKSpeaksSupervisorMutex"
+        _global_mutex = kernel32.CreateMutexW(None, True, mutex_name)
+        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            return False
+        return bool(_global_mutex)
+    except Exception:
+        return True
+
 def get_python_exe() -> str:
     if VENV_PYTHON.exists():
         return str(VENV_PYTHON)
@@ -73,9 +96,11 @@ def is_pid_alive(pid: int) -> bool:
         return False
     if sys.platform == "win32":
         try:
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             output = subprocess.check_output(
                 f'tasklist /FI "PID eq {pid}" /NH',
                 shell=True,
+                creationflags=flags,
                 stderr=subprocess.DEVNULL,
                 text=True
             )
@@ -109,9 +134,11 @@ def find_pids_on_port(port: int) -> list[int]:
     pids = []
     try:
         if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             output = subprocess.check_output(
                 f"netstat -ano -p tcp | findstr :{port}",
                 shell=True,
+                creationflags=flags,
                 stderr=subprocess.DEVNULL,
                 text=True
             )
@@ -144,10 +171,12 @@ def find_pids_on_port(port: int) -> list[int]:
 def kill_process_tree(pid: int):
     try:
         if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=flags,
                 check=False
             )
         else:
@@ -166,9 +195,11 @@ def free_port(port: int, label: str):
 def is_ffmpeg_running() -> bool:
     try:
         if sys.platform == "win32":
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             output = subprocess.check_output(
                 'tasklist /FI "IMAGENAME eq ffmpeg.exe" /NH',
                 shell=True,
+                creationflags=flags,
                 stderr=subprocess.DEVNULL,
                 text=True
             )
@@ -183,21 +214,27 @@ def is_ffmpeg_running() -> bool:
     except Exception:
         return False
 
-def is_backend_healthy(timeout: float = 8.0) -> bool:
-    try:
-        req = urllib.request.Request(BACKEND_HEALTH_URL, headers={"User-Agent": "HK-Supervisor"})
-        with urllib.request.urlopen(req, timeout=timeout) as res:
-            return res.status == 200
-    except Exception:
-        return False
+def is_backend_healthy(timeout: float = 6.0) -> bool:
+    for host in ["127.0.0.1", "localhost"]:
+        try:
+            req = urllib.request.Request(f"http://{host}:{BACKEND_PORT}/health", headers={"User-Agent": "HK-Supervisor"})
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                if res.status == 200:
+                    return True
+        except Exception:
+            pass
+    return False
 
 def is_frontend_healthy(timeout: float = 4.0) -> bool:
-    try:
-        req = urllib.request.Request(FRONTEND_HEALTH_URL, headers={"User-Agent": "HK-Supervisor"})
-        with urllib.request.urlopen(req, timeout=timeout) as res:
-            return res.status < 500
-    except Exception:
-        return False
+    for host in ["localhost", "127.0.0.1"]:
+        try:
+            req = urllib.request.Request(f"http://{host}:{FRONTEND_PORT}", headers={"User-Agent": "HK-Supervisor"})
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                if res.status < 500:
+                    return True
+        except Exception:
+            pass
+    return False
 
 def install_autostart() -> bool:
     if sys.platform != "win32":
@@ -318,6 +355,10 @@ class Supervisor:
         self.frontend_fail_count = 0
 
     def start_backend(self):
+        if is_backend_healthy():
+            log_msg(f"[Supervisor] Backend is already running and healthy on port {BACKEND_PORT}. Skipping unnecessary restart.")
+            self.backend_fail_count = 0
+            return
         free_port(BACKEND_PORT, "Backend")
         py_exe = get_python_exe()
         cmd = [
@@ -335,23 +376,29 @@ class Supervisor:
             try: self.backend_log.close()
             except Exception: pass
         self.backend_log = open(BACKEND_LOG, "a", encoding="utf-8")
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         self.backend_proc = subprocess.Popen(
             cmd,
             cwd=str(ROOT_DIR),
             stdout=self.backend_log,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
+            creationflags=flags
         )
         self.backend_fail_count = 0
 
     def start_frontend(self):
+        if is_frontend_healthy():
+            log_msg(f"[Supervisor] Frontend is already running and healthy on port {FRONTEND_PORT}. Skipping unnecessary restart.")
+            self.frontend_fail_count = 0
+            return
         free_port(FRONTEND_PORT, "Frontend")
         npm_cmd = get_npm_cmd()
         next_build = FRONTEND_DIR / ".next"
         if not self.dev_mode and next_build.exists():
-            cmd = [npm_cmd, "start", "--", "-p", str(FRONTEND_PORT)]
+            cmd = [npm_cmd, "start"]
             mode_desc = "Production"
         else:
-            cmd = [npm_cmd, "run", "dev", "--", "-p", str(FRONTEND_PORT)]
+            cmd = [npm_cmd, "run", "dev"]
             mode_desc = "Development"
 
         log_msg(f"[Supervisor] Launching Frontend ({mode_desc}) on http://localhost:{FRONTEND_PORT} ...")
@@ -360,11 +407,13 @@ class Supervisor:
             try: self.frontend_log.close()
             except Exception: pass
         self.frontend_log = open(FRONTEND_LOG, "a", encoding="utf-8")
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         self.frontend_proc = subprocess.Popen(
             cmd,
             cwd=str(FRONTEND_DIR),
             stdout=self.frontend_log,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
+            creationflags=flags
         )
         self.frontend_fail_count = 0
 
@@ -398,9 +447,19 @@ class Supervisor:
         signal.signal(signal.SIGINT, lambda s, f: self.stop_all() or sys.exit(0))
         signal.signal(signal.SIGTERM, lambda s, f: self.stop_all() or sys.exit(0))
 
+        if not acquire_single_instance_lock():
+            log_msg("[Supervisor] Another supervisor instance is already running (System Mutex held). Exiting duplicate process.")
+            sys.exit(0)
+
         PID_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(PID_FILE, "w", encoding="utf-8") as f:
             f.write(str(os.getpid()))
+
+        # Guarantee lifetime autostart across Windows reboots
+        try:
+            install_autostart()
+        except Exception as e:
+            log_msg(f"[AutoStart] Warning during self-healing autostart: {e}")
 
         log_msg("=========================================================")
         log_msg("  HK Speaks — Continuous Platform Supervisor Active      ")
@@ -408,8 +467,6 @@ class Supervisor:
         log_msg(f"  Backend:  http://{BACKEND_HOST}:{BACKEND_PORT}")
         log_msg(f"  Frontend: http://localhost:{FRONTEND_PORT}")
         log_msg("=========================================================")
-
-        install_autostart()
 
         # Step 1: Start Backend first
         self.start_backend()
@@ -449,9 +506,12 @@ class Supervisor:
 
                 # Check Backend
                 if self.backend_proc is None or self.backend_proc.poll() is not None:
-                    code = self.backend_proc.poll() if self.backend_proc else "None"
-                    log_msg(f"[Supervisor] [ALERT] Backend process exited (code={code}). Auto-restarting on port {BACKEND_PORT}...")
-                    self.start_backend()
+                    if is_backend_healthy():
+                        self.backend_fail_count = 0
+                    else:
+                        code = self.backend_proc.poll() if self.backend_proc else "None"
+                        log_msg(f"[Supervisor] [ALERT] Backend process exited (code={code}) and port {BACKEND_PORT} down. Auto-restarting...")
+                        self.start_backend()
                 else:
                     if not is_backend_healthy(timeout=6.0):
                         self.backend_fail_count += 1
@@ -466,9 +526,12 @@ class Supervisor:
 
                 # Check Frontend
                 if self.frontend_proc is None or self.frontend_proc.poll() is not None:
-                    code = self.frontend_proc.poll() if self.frontend_proc else "None"
-                    log_msg(f"[Supervisor] [ALERT] Frontend process exited (code={code}). Auto-restarting on port {FRONTEND_PORT}...")
-                    self.start_frontend()
+                    if is_frontend_healthy():
+                        self.frontend_fail_count = 0
+                    else:
+                        code = self.frontend_proc.poll() if self.frontend_proc else "None"
+                        log_msg(f"[Supervisor] [ALERT] Frontend process exited (code={code}) and port {FRONTEND_PORT} down. Auto-restarting...")
+                        self.start_frontend()
                 else:
                     if not is_frontend_healthy():
                         self.frontend_fail_count += 1
@@ -486,22 +549,11 @@ class Supervisor:
                 log_msg(f"[Supervisor] Loop error: {e}")
                 time.sleep(1.0)
 
-def ensure_task_scheduler_job():
-    if sys.platform != "win32":
-        return
-    vbs_path = ROOT_DIR / "scripts" / "autostart.vbs"
-    cmd = f'schtasks /Create /TN "HKSpeaksSupervisorDaemon" /TR "C:\\Windows\\System32\\wscript.exe \\"{str(vbs_path)}\\"" /SC ONCE /ST 23:59 /F'
-    try:
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
 def spawn_detached_supervisor() -> bool:
     """
-    Spawns supervisor.py as an independent, detached Windows background service.
-    Uses Windows Task Scheduler to guarantee complete immunity from parent terminal / Job Object closure.
+    Spawns supervisor.py as an independent, completely hidden Windows background service.
+    Guarantees NO console window or popup ever appears.
     """
-    # Direct detached pythonw spawn with immunity from terminal closure
     py_exe = get_pythonw_exe()
     script_path = str(ROOT_DIR / "scripts" / "supervisor.py")
     cmd = [py_exe, script_path, "--daemon"]
@@ -510,7 +562,9 @@ def spawn_detached_supervisor() -> bool:
     if sys.platform == "win32":
         DETACHED_PROCESS = 0x00000008
         CREATE_NEW_PROCESS_GROUP = 0x00000200
-        creationflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        CREATE_NO_WINDOW = 0x08000000
+        CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+        creationflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB
 
     proc = subprocess.Popen(
         cmd,
@@ -521,7 +575,7 @@ def spawn_detached_supervisor() -> bool:
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL
     )
-    log_msg(f"[Supervisor] Detached background supervisor daemon launched (PID {proc.pid}).")
+    log_msg(f"[Supervisor] Detached background supervisor daemon launched silently (PID {proc.pid}).")
     return True
 
 def print_status(verbose: bool = True) -> int:
@@ -573,6 +627,11 @@ def start_and_wait(timeout_seconds: int = 15) -> int:
     Ensures the continuous supervisor daemon is running in background.
     Waits until both Backend and Frontend are healthy, prints status, and exits 0.
     """
+    try:
+        install_autostart()
+    except Exception:
+        pass
+
     existing_pid = get_existing_supervisor_pid()
     if existing_pid and is_backend_healthy() and is_frontend_healthy():
         print("[Supervisor] Platform is already active and healthy in background.")
@@ -632,6 +691,9 @@ def main():
         sys.exit(0)
 
     if args.daemon or args.foreground:
+        if not acquire_single_instance_lock():
+            log_msg("[Supervisor] Another supervisor instance is already running (System Mutex held). Exiting duplicate process.")
+            sys.exit(0)
         # Long-running background daemon process
         supervisor = Supervisor(dev_mode=args.dev)
         supervisor.run()

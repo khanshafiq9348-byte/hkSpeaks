@@ -63,7 +63,9 @@ class AudioProcessor:
     @staticmethod
     async def concatenate_audio_chunks(chunks_bytes: List[bytes], output_format: str = "mp3") -> bytes:
         """
-        Concatenates multiple audio byte streams into a single seamless audio file with normalized volume.
+        Seamlessly stitches multiple audio byte chunks into a unified, continuous audio file.
+        Uses micro-crossfading (acrossfade) at chunk boundaries to eliminate clicks and silence gaps,
+        followed by EBU R128 loudness normalization to ensure consistent volume across the entire speech.
         """
         if not chunks_bytes:
             return b""
@@ -71,39 +73,44 @@ class AudioProcessor:
             return chunks_bytes[0]
 
         temp_files = []
-        concat_list_file = None
         output_file = None
 
         try:
-            # Write chunk files
+            # Write chunk files with proper format extension
+            ext = output_format.lower() if output_format.lower() in ("mp3", "wav") else "mp3"
             for i, chunk in enumerate(chunks_bytes):
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{i}.tmp")
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{i}.{ext}")
                 tmp.write(chunk)
                 tmp.close()
                 temp_files.append(tmp.name)
 
-            # Write concat file list
-            concat_list = tempfile.NamedTemporaryFile(delete=False, suffix="_list.txt", mode="w", encoding="utf-8")
-            for fpath in temp_files:
-                # Format for ffmpeg concat demuxer: file 'path'
-                safe_path = fpath.replace("\\", "/")
-                concat_list.write(f"file '{safe_path}'\n")
-            concat_list.close()
-            concat_list_file = concat_list.name
-
-            output_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{output_format}")
+            output_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_seamless.{ext}")
             output_tmp.close()
             output_file = output_tmp.name
 
-            # Run ffmpeg concat
+            # Build chained acrossfade filter graph + EBU R128 loudness normalization
+            inputs = []
+            for fpath in temp_files:
+                inputs.extend(["-i", fpath])
+
+            filter_parts = []
+            prev_label = "0:a"
+            for i in range(1, len(temp_files)):
+                next_label = f"{i}:a"
+                out_label = f"a{i}" if i < len(temp_files) - 1 else "merged"
+                filter_parts.append(f"[{prev_label}][{next_label}]acrossfade=d=0.04:c1=tri:c2=tri[{out_label}]")
+                prev_label = out_label
+
+            filter_complex = ";".join(filter_parts) + ";[merged]loudnorm=I=-16:TP=-1.5:LRA=11[final]"
+
             cmd = [
                 "ffmpeg", "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", concat_list_file,
-                "-c:a", "libmp3lame" if output_format == "mp3" else "pcm_s16le",
+                *inputs,
+                "-filter_complex", filter_complex,
+                "-map", "[final]",
+                "-c:a", "libmp3lame" if ext == "mp3" else "pcm_s16le",
                 "-b:a", "192k",
-                "-ar", "44100" if output_format == "mp3" else "24000",
+                "-ar", "44100" if ext == "mp3" else "24000",
                 output_file
             ]
 
@@ -114,33 +121,52 @@ class AudioProcessor:
             )
             stdout, stderr = await proc.communicate()
 
-            if proc.returncode != 0 or not os.path.exists(output_file):
-                # Fallback: simple byte concatenation if raw streams
-                return b"".join(chunks_bytes)
+            if proc.returncode == 0 and os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                with open(output_file, "rb") as f:
+                    return f.read()
 
-            with open(output_file, "rb") as f:
-                return f.read()
+            logger.warning(f"FFmpeg acrossfade failed (code {proc.returncode}): {stderr.decode('utf-8', errors='ignore')}. Attempting fallback concat.")
+
+            # Fallback concat demuxer if filter graph fails
+            concat_list = tempfile.NamedTemporaryFile(delete=False, suffix="_list.txt", mode="w", encoding="utf-8")
+            for fpath in temp_files:
+                safe_path = fpath.replace("\\", "/")
+                concat_list.write(f"file '{safe_path}'\n")
+            concat_list.close()
+
+            fallback_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_list.name,
+                "-c:a", "libmp3lame" if ext == "mp3" else "pcm_s16le",
+                "-b:a", "192k",
+                "-ar", "44100" if ext == "mp3" else "24000",
+                output_file
+            ]
+            fb_proc = await asyncio.create_subprocess_exec(*fallback_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            await fb_proc.communicate()
+            if os.path.exists(concat_list.name):
+                try: os.remove(concat_list.name)
+                except Exception: pass
+
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                with open(output_file, "rb") as f:
+                    return f.read()
+
+            return b"".join(chunks_bytes)
 
         except Exception as e:
+            logger.error(f"Error in concatenate_audio_chunks: {e}")
             return b"".join(chunks_bytes)
         finally:
-            # Clean up all temporary files
             for tf in temp_files:
                 if os.path.exists(tf):
-                    try:
-                        os.remove(tf)
-                    except Exception:
-                        pass
-            if concat_list_file and os.path.exists(concat_list_file):
-                try:
-                    os.remove(concat_list_file)
-                except Exception:
-                    pass
+                    try: os.remove(tf)
+                    except Exception: pass
             if output_file and os.path.exists(output_file):
-                try:
-                    os.remove(output_file)
-                except Exception:
-                    pass
+                try: os.remove(output_file)
+                except Exception: pass
 
     @staticmethod
     def generate_speech_fallback(sample_text: str) -> bytes:

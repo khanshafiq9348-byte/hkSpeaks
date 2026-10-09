@@ -3,6 +3,7 @@ import uuid
 import csv
 import json
 import io
+import asyncio
 import subprocess
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Response, status
@@ -106,9 +107,15 @@ async def generate_image_prompts(
     matches script with spoken audio, and generates prompts reflecting both script and timeline.
     When audio is not provided: generates sentence-level prompts normally with natural pacing.
     """
-    clean_script = PromptEngine.extract_clean_script(str(script or ""))
+    # Parse template sections if user provided Script: or Master Style Prompt: in the text
+    parsed_sections = PromptEngine.parse_template_sections(str(script or ""))
+    script_source = str(script or "")
+    if "SCRIPT" in parsed_sections and parsed_sections["SCRIPT"].strip():
+        script_source = parsed_sections["SCRIPT"]
+
+    clean_script = PromptEngine.extract_clean_script(script_source)
     if not clean_script:
-        clean_script = str(script or "").strip()
+        clean_script = script_source.strip()
     if not clean_script:
         raise AppException(
             status_code=400,
@@ -116,7 +123,12 @@ async def generate_image_prompts(
             message="Script text is required."
         )
 
-    clean_style = PromptEngine.extract_clean_style(str(visual_style_prompt or ""))
+    raw_style = str(visual_style_prompt or "").strip()
+    if not raw_style and "STYLE" in parsed_sections and parsed_sections["STYLE"].strip():
+        raw_style = parsed_sections["STYLE"].strip()
+
+    clean_style = PromptEngine.extract_clean_style(raw_style)
+    style_for_engine = clean_style
     proj_title = str(title or "").strip() or "Image Prompt Project"
 
     audio_storage_key = ""
@@ -139,18 +151,20 @@ async def generate_image_prompts(
             )
             audio_filename = audio_file.filename
             total_dur = get_audio_duration_seconds(audio_storage_key)
-            scenes_data = PromptEngine.analyze_audio_and_align_script(
-                audio_path=audio_storage_key,
-                script_text=clean_script,
-                visual_style_prompt=clean_style,
-                total_duration=total_dur
+            scenes_data = await asyncio.to_thread(
+                PromptEngine.analyze_audio_and_align_script,
+                audio_storage_key,
+                clean_script,
+                style_for_engine,
+                total_dur
             )
 
     # 2. If audio is not provided, generate from script sentence structure
     if not audio_url:
-        scenes_data = PromptEngine.generate_from_script_and_style(
-            script_text=clean_script,
-            visual_style_prompt=clean_style
+        scenes_data = await asyncio.to_thread(
+            PromptEngine.generate_from_script_and_style,
+            clean_script,
+            style_for_engine
         )
         audio_filename = "script_narration.txt"
         total_dur = scenes_data[-1]["end_time"] if scenes_data else 10.0
@@ -175,8 +189,8 @@ async def generate_image_prompts(
     db.add(project)
     await db.flush()
 
-    for sdata in scenes_data:
-        scene = PromptScene(
+    db_scenes = [
+        PromptScene(
             project_id=project.id,
             scene_index=sdata["scene_index"],
             start_time=sdata["start_time"],
@@ -184,10 +198,12 @@ async def generate_image_prompts(
             duration=sdata["duration"],
             transcript_text=sdata["sentence"],
             image_prompt=sdata["image_prompt"],
-            negative_prompt=sdata.get("negative_prompt", "blurry, low quality, distorted, extra limbs, bad anatomy, watermark, signature, text overlay"),
+            negative_prompt=sdata.get("negative_prompt") or PromptEngine.extract_negative_prompt(clean_style),
             aspect_ratio=sdata.get("aspect_ratio", "16:9")
         )
-        db.add(scene)
+        for sdata in scenes_data
+    ]
+    db.add_all(db_scenes)
 
     await db.commit()
     await db.refresh(project)
@@ -201,6 +217,7 @@ async def generate_image_prompts(
         "scenes_count": len(scenes_data),
         "total_scenes": len(scenes_data),
         "visual_style_prompt": clean_style,
+        "negative_prompt": scenes_data[0]["negative_prompt"] if scenes_data else PromptEngine.extract_negative_prompt(clean_style),
         "scenes": scenes_data
     }
 
@@ -221,13 +238,14 @@ async def generate_prompts_from_script(
         body.get("style_preset") or
         body.get("style") or
         ""
-    )
+    ).strip()
     visual_style_prompt = PromptEngine.extract_clean_style(raw_style)
+    style_for_engine = visual_style_prompt
     title = str(body.get("title", "")).strip() or "Script Prompt Project"
 
     scenes_data = PromptEngine.generate_from_script_and_style(
         script_text=script_text,
-        visual_style_prompt=visual_style_prompt
+        visual_style_prompt=style_for_engine
     )
     total_dur = scenes_data[-1]["end_time"] if scenes_data else 10.0
 
@@ -259,7 +277,7 @@ async def generate_prompts_from_script(
             duration=sdata["duration"],
             transcript_text=sdata["sentence"],
             image_prompt=sdata["image_prompt"],
-            negative_prompt=sdata.get("negative_prompt", "blurry, low quality, distorted, extra limbs, bad anatomy, watermark, signature, text overlay"),
+            negative_prompt=sdata.get("negative_prompt") or PromptEngine.extract_negative_prompt(visual_style_prompt),
             aspect_ratio=sdata.get("aspect_ratio", "16:9")
         )
         db.add(scene)
@@ -278,6 +296,7 @@ async def generate_prompts_from_script(
         "scenes_count": len(scenes_data),
         "total_scenes": len(scenes_data),
         "visual_style_prompt": visual_style_prompt,
+        "negative_prompt": scenes_data[0]["negative_prompt"] if scenes_data else PromptEngine.extract_negative_prompt(visual_style_prompt),
         "scenes": scenes_data
     }
 

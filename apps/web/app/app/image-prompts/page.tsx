@@ -17,12 +17,15 @@ import {
   Clock,
   Music
 } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api";
 
 interface ScenePrompt {
   scene_index: number;
   sentence: string;
   transcript_text?: string;
   image_prompt: string;
+  negative_prompt?: string;
+  aspect_ratio?: string;
   start_time: number;
   end_time: number;
   duration: number;
@@ -56,8 +59,14 @@ export default function ImagePromptsPage() {
   // Single large text box content for all generated prompts
   const [promptsOutput, setPromptsOutput] = useState<string>("");
 
-  // Copy State
+  // Negative Prompt (kept separate for bulk image generator)
+  const [negativePromptOutput, setNegativePromptOutput] = useState<string>(
+    "no text, no numbers, no letters, no captions, no labels, no typography, no written words, watermark, signature, subtitles, blurry, low quality, distorted, extra limbs, bad anatomy, deformed"
+  );
+
+  // Copy States
   const [isCopiedAll, setIsCopiedAll] = useState<boolean>(false);
+  const [isCopiedNegative, setIsCopiedNegative] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -95,18 +104,38 @@ export default function ImagePromptsPage() {
     }
   };
 
-  // Clean prompt text from any meta instructions, template tags, or line breaks
+  // Clean prompt text from any meta instructions, template tags, or forbidden headers
   const sanitizePromptForGenerator = (text: string): string => {
     if (!text) return "";
     return text
-      .replace(/\[\s*(?:ROLE|INPUT|GLOBAL\s+VISUAL\s+STYLE[^\]]*|INSTRUCTIONS[^\]]*|OUTPUT\s+TEMPLATE|OUTPUT\s+FORMAT|OUTPUT|TEMPLATE|INSERT\s+[^\]]+|RULES|SYSTEM|META|CINEMATIC\s+RULES|specific\s+visual\s+scene[^\]]*|characters[^\]]*|action[^\]]*|environment[^\]]*|camera[^\]]*|composition[^\]]*|lighting[^\]]*|color[^\]]*|visual\s+style\s+details[^\]]*|scene[^\]]*|characters\/action\/environment|camera\/composition|lighting\/color)\s*\]/gi, " ")
+      // Strip quotation marks so image generators never paint dialogue/quotes as written words
+      .replace(/["“”]/g, "")
+      // Strip lingering scene/shot/prompt numbers inside prompt
+      .replace(/\b(?:Scene|Shot|Prompt|Image)\s*\d+[:.]?\b/gi, "")
+      // Strip heading/caption/label/metadata tags
+      .replace(/\b(?:headings?|captions?|labels?|metadata|ui\s+text|structure\s+text|instruction\s+text)\s*:\s*/gi, "")
+      // Strip forbidden headers whether enclosed in brackets or followed by colons
+      .replace(/\[\s*(?:LOCKED\s+STYLE\s+BIBLE|STYLE\s+BIBLE|MASTER\s+STYLE\s+BIBLE|ART\s+STYLE|CHARACTER\s+DESIGN(?:\s+RULES?)?|LINE\s*(?:&|and)\s*TEXTURE|COLOR\s+PALETTE(?:\s+ROTATION(?:\s+RULE)?)?|TYPOGRAPHY(?:\s+RULES?)?|COMPOSITION\s*(?:&|and)\s*CAMERA\s+RULES?|MOOD\s+CONSISTENCY|SCENE\s+GENERATION(?:\s+LOGIC|\s+RULES?)?|STEP\s*\d+|USER\s+INPUT(?:\s+FORMAT)?|NUMBER\s+OF\s+IMAGES(?:\s+NEEDED)?|RETURN\s+ONLY|OUTPUT\s+ONLY|CINEMATIC\s+LANGUAGE|CAMERA\s+ANGLES?|COMPOSITION\s+RULES?|LIGHTING\s+STYLE|HISTORICAL\s+ACCURACY(?:\s+RULE)?|EMOTIONAL\s+TONE|VISUAL\s+STORYTELLING(?:\s+RULE)?|NO\s+TEXT(?:\s+RULE)?|FINAL\s+QUALITY(?:\s+STANDARD)?|QUALITY\s+STANDARD|GLOBAL\s+VISUAL\s+STYLE[^\]]*|INSTRUCTIONS[^\]]*|OUTPUT\s+TEMPLATE|OUTPUT\s+FORMAT|OUTPUT|TEMPLATE|INSERT\s+[^\]]+|RULES|SYSTEM|META|CINEMATIC\s+RULES|specific\s+visual\s+scene[^\]]*|characters[^\]]*|action[^\]]*|environment[^\]]*|camera[^\]]*|composition[^\]]*|lighting[^\]]*|color[^\]]*|visual\s+style\s+details[^\]]*|scene[^\]]*|characters\/action\/environment|camera\/composition|lighting\/color)\s*\]/gi, " ")
+      .replace(/(?:\*\*|__)?\b(?:LOCKED\s+STYLE\s+BIBLE|STYLE\s+BIBLE|MASTER\s+STYLE\s+BIBLE|ART\s+STYLE|CHARACTER\s+DESIGN(?:\s+RULES?)?|LINE\s*(?:&|and)\s*TEXTURE|COLOR\s+PALETTE(?:\s+ROTATION(?:\s+RULE)?)?|TYPOGRAPHY(?:\s+RULES?)?|COMPOSITION\s*(?:&|and)\s*CAMERA\s+RULES?|MOOD\s+CONSISTENCY|SCENE\s+GENERATION(?:\s+LOGIC|\s+RULES?)?|STEP\s*\d+|USER\s+INPUT(?:\s+FORMAT)?|NUMBER\s+OF\s+IMAGES(?:\s+NEEDED)?|RETURN\s+ONLY|OUTPUT\s+ONLY|CINEMATIC\s+LANGUAGE|CAMERA\s+ANGLES?|COMPOSITION\s+RULES?|LIGHTING\s+STYLE|HISTORICAL\s+ACCURACY(?:\s+RULE)?|EMOTIONAL\s+TONE|VISUAL\s+STORYTELLING(?:\s+RULE)?|NO\s+TEXT(?:\s+RULE)?|FINAL\s+QUALITY(?:\s+STANDARD)?|QUALITY\s+STANDARD|GLOBAL\s+VISUAL\s+STYLE(?:\s*&\s*CINEMATIC\s*RULES)?|VISUAL\s+STYLE|INSTRUCTIONS(?:\s+FOR\s+BREAKING\s+DOWN\s+(?:THE\s+)?SCRIPT)?|OUTPUT\s+(?:TEMPLATE|FORMAT|RULE|RULES)|OUTPUT|TEMPLATE|ROLE|INPUT|SYSTEM|META|ART\s+MEDIUM|COLOR\s+PSYCHOLOGY|COMPOSITION\s*&\s*ANGLES|TEXT\s+INTEGRATION|TEXT\s+OVERLAY|STRICT\s+OUTPUT\s+RULE)\b(?:\*\*|__)?\s*:/gi, " ")
       .replace(/<\s*(?:INSERT\s+[^>]+|ROLE|INPUT|OUTPUT|TEMPLATE)\s*>/gi, " ")
+      .replace(/\b(?:locked\s+style\s+bible|style\s+bible|master\s+style\s+bible|character\s+design\s+rules?|typography\s+rules?|composition\s*(?:&|and)\s*camera\s+rules?|scene\s+generation\s+logic|user\s+input\s+format|number\s+of\s+images(?:\s+needed)?|return\s+only|output\s+only|step\s*\d+)\b[^\n\r.]*\.?/gi, " ")
+      .replace(/\banalyze\s+the\s+provided\s+(?:video\s+|audio\s+)?(?:script|narration|text)[^\n\r.]*\.?/gi, " ")
+      .replace(/\bgenerate\s+(?:a\s+)?distinct\s+(?:image\s+)?prompts?[^\n\r.]*\.?/gi, " ")
+      .replace(/\bdo\s+not\s+limit[^\n\r.]*\.?/gi, " ")
+      .replace(/\bdo\s+not\s+copy[^\n\r.]*\.?/gi, " ")
+      .replace(/\bdo\s+not\s+invent[^\n\r.]*\.?/gi, " ")
+      .replace(/\bmaster\s+prompt(?:\s+text)?[^\n\r.]*\.?/gi, " ")
+      .replace(/\bsystem\s+instructions?[^\n\r.]*\.?/gi, " ")
+      .replace(/\braw\s+style\s+prompt[^\n\r.]*\.?/gi, " ")
+      .replace(/\brequired\s+pipeline[^\n\r.]*\.?/gi, " ")
+      .replace(/\bclean\s+visual\s+scene\s+description[^\n\r.]*\.?/gi, " ")
+      .replace(/\bno\s+internal\s+instructions[^\n\r.]*\.?/gi, " ")
       .replace(/^(?:\d+\.|\bINSERT\s+NUMBER\s+HERE\b\.*)\s*/gi, "")
-      .replace(/^(?:\*\*)?(?:role|input|output\s+template|instructions|global\s+visual\s+style|rules)(?:\*\*)?\s*:\s*/gi, "")
       .replace(/[\r\n]+/g, " ")
       .replace(/\s+/g, " ")
       .replace(/\s*,\s*/g, ", ")
       .replace(/,\s*,+/g, ",")
+      .replace(/,\s*\./g, ".")
       .replace(/^[,.\s]+/, "")
       .replace(/[,.\s]+$/, "")
       .trim();
@@ -136,14 +165,38 @@ export default function ImagePromptsPage() {
         formData.append("audio_file", audioFile);
       }
 
-      const res = await fetch("http://127.0.0.1:8000/v1/image-prompts/generate", {
-        method: "POST",
-        body: formData,
-      });
+      const token = typeof window !== "undefined" ? localStorage.getItem("hk_token") : null;
+      const reqHeaders: Record<string, string> = {};
+      if (token && token !== "undefined" && token !== "null" && token.trim() !== "") {
+        reqHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
+      const apiUrl = `${API_BASE_URL}/image-prompts/generate`;
+
+      let res: Response;
+      try {
+        res = await fetch(apiUrl, {
+          method: "POST",
+          headers: reqHeaders,
+          body: formData,
+        });
+      } catch (firstErr: any) {
+        // Fallback for local development if direct connection needed
+        try {
+          res = await fetch("http://127.0.0.1:8000/v1/image-prompts/generate", {
+            method: "POST",
+            headers: reqHeaders,
+            body: formData,
+          });
+        } catch (secondErr: any) {
+          throw new Error("Cannot reach backend server. Please ensure the backend is running.");
+        }
+      }
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to generate image prompts.");
+        const errMsg = errData.message || errData.detail || errData.error?.message || `Server returned error (${res.status})`;
+        throw new Error(errMsg);
       }
 
       const data = await res.json();
@@ -153,15 +206,24 @@ export default function ImagePromptsPage() {
       setHasAudioUploaded(hasAudio);
       setAudioTotalDuration(data.total_duration || 0);
 
+      // Extract and set the separated negative prompt
+      if (data.negative_prompt) {
+        setNegativePromptOutput(data.negative_prompt);
+      } else if (generatedScenes.length > 0 && generatedScenes[0].negative_prompt) {
+        setNegativePromptOutput(generatedScenes[0].negative_prompt);
+      }
+
       // Format all prompts sequentially: each prompt is ONE continuous paragraph
       // No internal line breaks, no blank lines inside a prompt, only ONE blank line between numbered prompts
       // Strictly contains ONLY the visual description for the image generator
       const formattedPromptsText = generatedScenes
         .map((s, idx) => {
           const num = idx + 1;
-          const cleanPrompt = sanitizePromptForGenerator(s.image_prompt || "");
+          const rawText = (s.image_prompt || s.transcript_text || s.sentence || "").trim();
+          const cleanPrompt = sanitizePromptForGenerator(rawText) || rawText;
           return `${num}. ${cleanPrompt}`;
         })
+        .filter(Boolean)
         .join("\n\n");
 
       setPromptsOutput(formattedPromptsText);
@@ -188,6 +250,15 @@ export default function ImagePromptsPage() {
     navigator.clipboard.writeText(promptsOutput);
     setIsCopiedAll(true);
     setTimeout(() => setIsCopiedAll(false), 2200);
+  };
+
+  // ONE-CLICK "COPY NEGATIVE PROMPT" button: Copies negative prompt separately for bulk generator
+  const handleCopyNegativePrompt = () => {
+    if (!negativePromptOutput.trim()) return;
+
+    navigator.clipboard.writeText(negativePromptOutput);
+    setIsCopiedNegative(true);
+    setTimeout(() => setIsCopiedNegative(false), 2200);
   };
 
   return (
@@ -437,6 +508,52 @@ export default function ImagePromptsPage() {
               <span>Click &ldquo;COPY ALL PROMPTS&rdquo; to copy all to clipboard</span>
             </div>
           </div>
+        </section>
+
+        {/* NEGATIVE PROMPT SECTION: KEPT SEPARATE FOR BULK IMAGE GENERATOR */}
+        <section className="bg-[#0C0E18] border border-[#1B1F32] rounded-2xl p-6 shadow-xl flex flex-col space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#181C2B] gap-2">
+            <div className="flex items-center space-x-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+              <h2 className="text-xs font-bold uppercase tracking-wider text-gray-200">
+                Negative Prompt (Separated for Bulk Generator)
+              </h2>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20 font-bold">
+                negativePrompt
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCopyNegativePrompt}
+              disabled={!negativePromptOutput.trim()}
+              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-[#171B2B] hover:bg-[#22273D] text-rose-300 hover:text-white text-xs font-bold border border-rose-500/30 transition-all active:scale-95 cursor-pointer shadow-sm"
+              title="Copy negative prompt separately"
+            >
+              {isCopiedNegative ? (
+                <>
+                  <Check className="w-3.5 h-3.5 stroke-[3] text-emerald-400" />
+                  <span className="text-emerald-400">Copied Negative!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>COPY NEGATIVE PROMPT</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <p className="text-[11px] text-gray-400">
+            Keep separate: Paste this into the <code className="text-rose-300 bg-rose-950/40 px-1 py-0.5 rounded font-mono">negative_prompt</code> or <code className="text-rose-300 bg-rose-950/40 px-1 py-0.5 rounded font-mono">--no</code> parameter of your bulk image generator.
+          </p>
+
+          <textarea
+            value={negativePromptOutput}
+            onChange={(e) => setNegativePromptOutput(e.target.value)}
+            rows={2}
+            className="w-full bg-[#07080F] border border-[#1E2336] focus:border-rose-500/60 rounded-xl p-3 text-xs font-mono text-rose-200/90 placeholder-gray-600 leading-relaxed resize-y select-text focus:outline-none"
+          />
         </section>
       </main>
     </div>

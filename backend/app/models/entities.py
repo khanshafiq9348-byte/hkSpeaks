@@ -130,6 +130,13 @@ class Voice(Base):
         tags = [s.strip() for s in self.style.split(",") if s.strip()]
         return tags if tags else ["Conversational"]
 
+    @styles.setter
+    def styles(self, val: Any) -> None:
+        if isinstance(val, list):
+            self.style = ", ".join(val)
+        elif isinstance(val, str):
+            self.style = val
+
 class VoiceClone(Base):
     __tablename__ = "voice_clones"
 

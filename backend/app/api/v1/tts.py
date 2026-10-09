@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["Text to Speech"])
 
 @router.post("/text-to-speech", response_model=GenerationResponse)
+@router.post("/voice/generate", response_model=GenerationResponse)
+@router.post("/generate", response_model=GenerationResponse)
 async def generate_speech(
     body: GenerationCreate,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
@@ -105,6 +107,7 @@ async def generate_speech(
 
     logger.info(
         f"[TTS Generation Request] user='{current_user.id}', request_voice_id='{body.voice_id}', "
+        f"speed={body.speed}x, pitch={body.pitch}, volume={body.volume}%, "
         f"request_voice_type='{body.voice_type}', matched_voice_id='{voice.id}', "
         f"matched_voice_name='{voice.name}', tier='{voice.tier}', type='{voice.type}', "
         f"provider='{voice.provider}', model='{voice.model}', "
@@ -125,9 +128,11 @@ async def generate_speech(
     # 4. Create Generation record (queued)
     estimated_duration = round(max(1.0, text_len / 15.0), 2)
     settings_data = {
-        "speed": float(body.speed if body.speed is not None else 0.9),
+        "speed": float(body.speed if body.speed is not None else 1.0),
         "pitch": float(body.pitch if body.pitch is not None else 0.0),
-        "volume": float(body.volume if body.volume is not None else 100.0),
+        "volume": float(body.volume if body.volume is not None else 0.0),
+        "expressiveness": float(body.expressiveness if body.expressiveness is not None else 0.7),
+        "diversity": float(body.diversity if body.diversity is not None else 0.7),
         "stability": body.stability or 0.5,
         "similarity": body.similarity or 0.75,
         "style": body.style or 0.0,

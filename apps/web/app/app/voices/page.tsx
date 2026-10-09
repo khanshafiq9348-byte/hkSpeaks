@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { apiClient, API_BASE_URL } from "@/lib/api";
-import { Voice } from "@/components/VoiceSelectorModal";
+import { apiClient, API_BASE_URL, getPlayableAudioUrl } from "@/lib/api";
+import { Voice, LANGUAGE_NAMES, getVoiceStyles } from "@/components/VoiceSelectorModal";
 import { 
   Sparkles, 
   Search, 
@@ -26,37 +26,7 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-const PROVIDERS = [
-  { id: "all", label: "All Providers" },
-  { id: "elevenlabs", label: "ElevenLabs" },
-  { id: "edge", label: "Microsoft Edge" },
-  { id: "openai", label: "OpenAI" },
-  { id: "amazon", label: "Amazon Polly" },
-  { id: "google", label: "Google Cloud" },
-  { id: "azure", label: "Azure Speech" },
-  { id: "other", label: "Other Providers" },
-];
 
-const TIERS = [
-  { id: "all", label: "All Tiers" },
-  { id: "free", label: "Free" },
-  { id: "standard", label: "Standard" },
-  { id: "premium", label: "Premium" },
-  { id: "ultra", label: "Ultra" },
-];
-
-const STYLE_OPTIONS = [
-  { id: "all", label: "All Styles" },
-  { id: "Documentary", label: "Documentary" },
-  { id: "Storytelling", label: "Storytelling" },
-  { id: "Cinematic", label: "Cinematic" },
-  { id: "Narration", label: "Narration" },
-  { id: "News", label: "News" },
-  { id: "Conversational", label: "Conversational" },
-  { id: "Character", label: "Character" },
-  { id: "Educational", label: "Educational" },
-  { id: "Commercial", label: "Commercial" },
-];
 
 function VoicesContent() {
   const router = useRouter();
@@ -176,7 +146,7 @@ function VoicesContent() {
       audioRef.current.pause();
     }
 
-    const previewUrl = url || `${API_BASE_URL}/voices/${voiceId}/preview`;
+    const previewUrl = url ? (getPlayableAudioUrl(url) || url) : `${API_BASE_URL}/voices/${voiceId}/preview`;
     const audio = new Audio(previewUrl);
     audioRef.current = audio;
     setPlayingId(voiceId);
@@ -281,8 +251,8 @@ function VoicesContent() {
 
   // Separate library voices
   const libraryVoices = useMemo(() => {
-    return voices.filter(
-      (v) => (v.voice_type === "library" || v.tier !== "custom") && !v.owner_user_id
+    return (voices || []).filter(
+      (v) => v && (v.voice_type === "library" || v.tier !== "custom") && !v.owner_user_id
     );
   }, [voices]);
 
@@ -290,22 +260,138 @@ function VoicesContent() {
   const availableLanguages = useMemo(() => {
     const langs = new Set<string>();
     libraryVoices.forEach((v) => {
-      if (v.language) langs.add(v.language);
+      if (v?.language) langs.add(v.language);
     });
     return Array.from(langs).sort();
+  }, [libraryVoices]);
+
+  // Dynamic language options with live counts
+  const dynamicLanguages = useMemo(() => {
+    const counts: Record<string, number> = {};
+    libraryVoices.forEach((v) => {
+      if (!v) return;
+      const l = (v.language || "").toLowerCase();
+      if (l) counts[l] = (counts[l] || 0) + 1;
+    });
+
+    return availableLanguages.map((l) => ({
+      code: l,
+      name: LANGUAGE_NAMES[l?.toLowerCase()] || (l ? l.toUpperCase() : "Unknown"),
+      count: counts[l?.toLowerCase()] || counts[l] || 0,
+    })).sort((a, b) => b.count - a.count);
+  }, [availableLanguages, libraryVoices]);
+
+  // Gender counts from verified library voices
+  const genderCounts = useMemo(() => {
+    let male = 0;
+    let female = 0;
+    libraryVoices.forEach((v) => {
+      if (!v) return;
+      const g = (v.gender || "").toLowerCase();
+      if (g === "male") male++;
+      else if (g === "female") female++;
+    });
+    return { male, female, total: libraryVoices.length };
+  }, [libraryVoices]);
+
+  // Dynamic style options with live counts from verified library voices
+  const availableStyles = useMemo(() => {
+    const styleCountMap: Record<string, number> = {};
+    libraryVoices.forEach((v) => {
+      if (!v) return;
+      const list = getVoiceStyles(v);
+      list.forEach((s) => {
+        if (s) {
+          styleCountMap[s] = (styleCountMap[s] || 0) + 1;
+        }
+      });
+    });
+
+    const canonicalOrder = [
+      "Documentary",
+      "Storytelling",
+      "Cinematic",
+      "Narration",
+      "News",
+      "Conversational",
+      "Character",
+      "Educational",
+      "Commercial",
+    ];
+    const ordered: { id: string; label: string; count: number }[] = [];
+
+    canonicalOrder.forEach((cat) => {
+      if (styleCountMap[cat]) {
+        ordered.push({ id: cat, label: `${cat} (${styleCountMap[cat]})`, count: styleCountMap[cat] });
+        delete styleCountMap[cat];
+      }
+    });
+
+    Object.entries(styleCountMap)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([st, cnt]) => {
+        ordered.push({ id: st, label: `${st} (${cnt})`, count: cnt });
+      });
+
+    return [{ id: "all", label: `All Styles (${libraryVoices.length})`, count: libraryVoices.length }, ...ordered];
+  }, [libraryVoices]);
+
+  // Dynamic provider options with live counts
+  const availableProviders = useMemo(() => {
+    const provCounts: Record<string, number> = {};
+    libraryVoices.forEach((v) => {
+      if (!v) return;
+      const p = (v.provider || "edge").toLowerCase();
+      provCounts[p] = (provCounts[p] || 0) + 1;
+    });
+    const providerNames: Record<string, string> = {
+      edge: "Microsoft Edge",
+      elevenlabs: "ElevenLabs",
+      azure: "Azure Speech",
+      openai: "OpenAI",
+      amazon: "Amazon Polly",
+      google: "Google Cloud",
+    };
+    const list = Object.entries(provCounts).map(([p, cnt]) => ({
+      id: p,
+      label: `${providerNames[p] || p.toUpperCase()} (${cnt})`,
+      count: cnt,
+    }));
+    return [{ id: "all", label: `All Providers (${libraryVoices.length})`, count: libraryVoices.length }, ...list];
+  }, [libraryVoices]);
+
+  // Dynamic tier options with live counts
+  const availableTiers = useMemo(() => {
+    const tierCounts: Record<string, number> = {};
+    libraryVoices.forEach((v) => {
+      if (!v) return;
+      const t = (v.tier || "standard").toLowerCase();
+      tierCounts[t] = (tierCounts[t] || 0) + 1;
+    });
+    const order = ["standard", "premium", "ultra", "free"];
+    const list = order
+      .filter((t) => tierCounts[t])
+      .map((t) => ({
+        id: t,
+        label: `${t.charAt(0).toUpperCase() + t.slice(1)} (${tierCounts[t]})`,
+      }));
+    return [{ id: "all", label: `All Tiers (${libraryVoices.length})` }, ...list];
   }, [libraryVoices]);
 
   // Filtered library voices
   const filteredVoices = useMemo(() => {
     return libraryVoices.filter((v) => {
+      if (!v) return false;
       // Search
       const q = search.toLowerCase();
+      const vStyles = getVoiceStyles(v);
       const matchesSearch =
         !q ||
-        v.name.toLowerCase().includes(q) ||
+        (v.name && v.name.toLowerCase().includes(q)) ||
         (v.accent && v.accent.toLowerCase().includes(q)) ||
         (v.language && v.language.toLowerCase().includes(q)) ||
         (v.style && v.style.toLowerCase().includes(q)) ||
+        vStyles.some((s) => s.toLowerCase().includes(q)) ||
         (v.provider && v.provider.toLowerCase().includes(q));
 
       // Provider
@@ -332,8 +418,8 @@ function VoicesContent() {
       let matchesStyle = true;
       if (selectedStyle !== "all") {
         const sTarget = selectedStyle.toLowerCase();
-        const vStyles = (v.styles || []).map((s: string) => s.toLowerCase());
-        matchesStyle = vStyles.some((s: string) => s.includes(sTarget)) || (v.style || "").toLowerCase().includes(sTarget);
+        const vStylesLower = vStyles.map((s: string) => s.toLowerCase());
+        matchesStyle = vStylesLower.some((s: string) => s.includes(sTarget)) || (v.style || "").toLowerCase().includes(sTarget);
       }
 
       // Tier
@@ -397,7 +483,7 @@ function VoicesContent() {
           </div>
           <div>
             <h1 className="text-base font-bold text-white tracking-tight">Voice Catalog & Cloning</h1>
-            <p className="text-[11px] text-gray-400">1,000+ authentic neural AI voices and your private voice clone</p>
+            <p className="text-[11px] text-gray-400">{libraryVoices.length} authentic neural AI voices and your private voice clone</p>
           </div>
         </div>
 
@@ -451,7 +537,7 @@ function VoicesContent() {
                     {libraryVoices.length} Voices
                   </span>
                 </div>
-                <p className="text-xs text-gray-400 mt-0.5">1,000+ AI neural voices across 7 providers</p>
+                <p className="text-xs text-gray-400 mt-0.5">{libraryVoices.length} verified neural voices across {availableLanguages.length} languages</p>
               </div>
             </div>
             {activeSource === "library" && (
@@ -509,7 +595,7 @@ function VoicesContent() {
                     onChange={(e) => setSelectedStyle(e.target.value)}
                     className="px-3 py-2 bg-[#0B0C14] border border-[#23273D] rounded-xl text-xs text-gray-300 focus:outline-none focus:border-indigo-500 font-medium"
                   >
-                    {STYLE_OPTIONS.map((st) => (
+                    {availableStyles.map((st) => (
                       <option key={st.id} value={st.id}>
                         {st.label}
                       </option>
@@ -519,12 +605,12 @@ function VoicesContent() {
                   <select
                     value={selectedLanguage}
                     onChange={(e) => setSelectedLanguage(e.target.value)}
-                    className="px-3 py-2 bg-[#0B0C14] border border-[#23273D] rounded-xl text-xs text-gray-300 focus:outline-none focus:border-indigo-500"
+                    className="px-3 py-2 bg-[#0B0C14] border border-[#23273D] rounded-xl text-xs text-gray-300 focus:outline-none focus:border-indigo-500 capitalize"
                   >
-                    <option value="all">All Languages</option>
-                    {availableLanguages.map((lang) => (
-                      <option key={lang} value={lang}>
-                        {lang}
+                    <option value="all">All Languages ({dynamicLanguages.length})</option>
+                    {dynamicLanguages.map((lang) => (
+                      <option key={lang.code} value={lang.code}>
+                        {lang.name} ({lang.count})
                       </option>
                     ))}
                   </select>
@@ -534,10 +620,9 @@ function VoicesContent() {
                     onChange={(e) => setSelectedGender(e.target.value)}
                     className="px-3 py-2 bg-[#0B0C14] border border-[#23273D] rounded-xl text-xs text-gray-300 focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="all">All Genders</option>
-                    <option value="female">Female</option>
-                    <option value="male">Male</option>
-                    <option value="neutral">Neutral</option>
+                    <option value="all">All Genders ({genderCounts.total})</option>
+                    <option value="male">Male ({genderCounts.male})</option>
+                    <option value="female">Female ({genderCounts.female})</option>
                   </select>
                 </div>
               </div>
@@ -549,7 +634,7 @@ function VoicesContent() {
                     <Cpu className="w-3.5 h-3.5 text-indigo-400" />
                     <span>Provider:</span>
                   </span>
-                  {PROVIDERS.map((p) => (
+                  {availableProviders.map((p) => (
                     <button
                       key={p.id}
                       onClick={() => setSelectedProvider(p.id)}
@@ -571,7 +656,7 @@ function VoicesContent() {
                   <Layers className="w-3.5 h-3.5 text-purple-400" />
                   <span>Tier:</span>
                 </span>
-                {TIERS.map((t) => (
+                {availableTiers.map((t) => (
                   <button
                     key={t.id}
                     onClick={() => setSelectedTier(t.id)}
@@ -682,10 +767,7 @@ function VoicesContent() {
 
                       {/* Style Tag Badges */}
                       <div className="flex flex-wrap gap-1 mt-2.5">
-                        {((voice.styles && voice.styles.length > 0)
-                          ? voice.styles
-                          : (voice.style ? voice.style.split(",").map((s) => s.trim()) : ["Conversational"])
-                        ).slice(0, 3).map((st) => (
+                        {getVoiceStyles(voice).slice(0, 3).map((st) => (
                           <span
                             key={st}
                             className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-[#0C0E18] text-indigo-300/90 border border-[#23273D]"

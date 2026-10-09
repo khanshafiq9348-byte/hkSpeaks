@@ -44,6 +44,7 @@ export default function UploadedVoiceModal({
   const [search, setSearch] = useState("");
   const [voiceName, setVoiceName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [gender, setGender] = useState<"auto" | "male" | "female">("auto");
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [cloneStatus, setCloneStatus] = useState<UserCloneStatus>({
     voice: null,
@@ -126,7 +127,7 @@ export default function UploadedVoiceModal({
     const formData = new FormData();
     formData.append("name", voiceName.trim() || "My Uploaded Voice");
     formData.append("description", "");
-    formData.append("gender", "neutral");
+    formData.append("gender", gender);
     formData.append("language", "en");
     formData.append("consent_confirmed", "true");
     formData.append("rights_confirmed", "true");
@@ -304,7 +305,7 @@ export default function UploadedVoiceModal({
           <form onSubmit={handleSaveVoice} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
               {/* Voice Name Input */}
-              <div className="sm:col-span-5">
+              <div className="sm:col-span-4">
                 <input
                   type="text"
                   placeholder="Voice name (optional)"
@@ -315,8 +316,22 @@ export default function UploadedVoiceModal({
                 />
               </div>
 
+              {/* Gender Selector */}
+              <div className="sm:col-span-2">
+                <select
+                  value={gender}
+                  onChange={(e) => setGender(e.target.value as any)}
+                  disabled={isUploading}
+                  className="w-full px-2.5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                >
+                  <option value="auto">Auto (Pitch)</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+
               {/* Upload File Button */}
-              <div className="sm:col-span-4">
+              <div className="sm:col-span-3">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -334,7 +349,7 @@ export default function UploadedVoiceModal({
                 >
                   <Upload className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="truncate">
-                    {file ? file.name : "Upload .mp3 or .wav (max 10 MB)"}
+                    {file ? file.name : "Audio file"}
                   </span>
                 </label>
               </div>

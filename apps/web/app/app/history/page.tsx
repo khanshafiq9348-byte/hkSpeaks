@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import AudioPlayer from "@/components/AudioPlayer";
-import { apiClient } from "@/lib/api";
+import { apiClient, getPlayableAudioUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { 
   History, 
@@ -28,6 +28,7 @@ interface Generation {
   format: string;
   status: "queued" | "processing" | "completed" | "failed" | "cancelled" | string;
   audio_url?: string;
+  settings_json?: Record<string, any>;
   created_at: string;
 }
 
@@ -105,9 +106,10 @@ export default function HistoryPage() {
 
   const handleDirectDownload = async (g: Generation) => {
     if (!g.audio_url) return;
+    const downloadUrl = getPlayableAudioUrl(g.audio_url) || g.audio_url;
     setDownloadingId(g.id);
     try {
-      const res = await fetch(g.audio_url);
+      const res = await fetch(downloadUrl);
       const blob = await res.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -118,7 +120,7 @@ export default function HistoryPage() {
       a.remove();
       window.URL.revokeObjectURL(blobUrl);
     } catch {
-      window.open(g.audio_url, "_blank");
+      window.open(downloadUrl, "_blank");
     } finally {
       setDownloadingId(null);
     }
@@ -217,6 +219,7 @@ export default function HistoryPage() {
               voiceName={activeGen.voice_name}
               duration={activeGen.actual_audio_seconds}
               format={activeGen.format}
+              speed={activeGen.settings_json?.speed}
               autoPlay={true}
             />
             <div className="flex items-center justify-between pt-2 border-t border-[#202436]/60 text-xs">

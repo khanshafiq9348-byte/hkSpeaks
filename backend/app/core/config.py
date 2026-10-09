@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Storage
     STORAGE_PROVIDER: str = "local"  # 'local', 's3', 'r2', 'minio'
     STORAGE_LOCAL_DIR: str = "./data/storage"
-    STORAGE_PUBLIC_URL_BASE: str = "http://localhost:8000/v1/storage"
+    STORAGE_PUBLIC_URL_BASE: str = "/v1/storage"
     STORAGE_ENDPOINT_URL: Optional[str] = None
     STORAGE_BUCKET_NAME: str = "tts-audio-bucket"
     STORAGE_ACCESS_KEY_ID: Optional[str] = None
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # Quotas & Limits
     MAX_UPLOAD_SIZE_MB: int = 25
     MAX_AUDIO_DURATION_SECONDS: int = 300
-    DEFAULT_CHUNK_SIZE_CHARS: int = 1000
+    DEFAULT_CHUNK_SIZE_CHARS: int = 4500
 
     model_config = {
         "env_file": ".env",

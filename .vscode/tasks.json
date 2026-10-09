@@ -10,12 +10,11 @@
       },
       "isBackground": true,
       "problemMatcher": [],
-      "runOptions": {
-        "runOn": "folderOpen"
-      },
       "presentation": {
-        "reveal": "silent",
-        "panel": "shared"
+        "reveal": "never",
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
       }
     }
   ]

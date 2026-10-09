@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import { Play, Pause, Download, Volume2, VolumeX, RotateCcw, Loader2 } from "lucide-react";
+import { getPlayableAudioUrl } from "@/lib/api";
 
 interface AudioPlayerProps {
   src: string | null;
@@ -10,6 +11,7 @@ interface AudioPlayerProps {
   duration?: number;
   format?: string;
   autoPlay?: boolean;
+  speed?: number;
 }
 
 export default function AudioPlayer({
@@ -19,12 +21,13 @@ export default function AudioPlayer({
   duration = 0,
   format = "mp3",
   autoPlay = false,
+  speed,
 }: AudioPlayerProps) {
+  const playableSrc = useMemo(() => getPlayableAudioUrl(src), [src]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(duration);
-  const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
@@ -41,11 +44,11 @@ export default function AudioPlayer({
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
       audioRef.current.load();
-      if (autoPlay && src) {
+      if (autoPlay && playableSrc) {
         audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
       }
     }
-  }, [src]);
+  }, [playableSrc]);
 
   const togglePlay = async () => {
     if (!audioRef.current || !src) return;
@@ -80,15 +83,6 @@ export default function AudioPlayer({
     }
   };
 
-  const cyclePlaybackRate = () => {
-    const speeds = [1.0, 1.25, 1.5, 0.8];
-    const nextIdx = (speeds.indexOf(playbackRate) + 1) % speeds.length;
-    const nextRate = speeds[nextIdx];
-    setPlaybackRate(nextRate);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = nextRate;
-    }
-  };
 
   const toggleMute = () => {
     if (audioRef.current) {
@@ -98,10 +92,11 @@ export default function AudioPlayer({
   };
 
   const handleDownload = async () => {
-    if (!src) return;
+    const downloadTarget = playableSrc || src;
+    if (!downloadTarget) return;
     setIsDownloading(true);
     try {
-      const res = await fetch(src);
+      const res = await fetch(downloadTarget);
       const blob = await res.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -113,7 +108,7 @@ export default function AudioPlayer({
       window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
       // Fallback
-      window.open(src, "_blank");
+      window.open(downloadTarget, "_blank");
     } finally {
       setIsDownloading(false);
     }
@@ -139,7 +134,7 @@ export default function AudioPlayer({
     <div className="p-6 rounded-2xl bg-[#12141F] border border-indigo-500/30 shadow-xl shadow-indigo-950/20 space-y-4">
       <audio
         ref={audioRef}
-        src={src}
+        src={playableSrc || undefined}
         preload="auto"
         onTimeUpdate={handleTimeUpdate}
         onEnded={() => setIsPlaying(false)}
@@ -164,12 +159,12 @@ export default function AudioPlayer({
           >
             {isMuted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5" />}
           </button>
-          <button
-            onClick={cyclePlaybackRate}
-            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-[#1C2033] hover:bg-[#252A42] text-gray-300 border border-[#2A304C] transition-colors"
+          <span
+            className="px-2.5 py-1 text-xs font-mono font-semibold rounded-lg bg-[#1C2033] text-indigo-300 border border-indigo-500/30"
+            title={`Speaking speed applied: ${speed !== undefined ? speed : 0.9}x`}
           >
-            {playbackRate}x
-          </button>
+            {speed !== undefined ? `${speed}x` : "0.9x"}
+          </span>
           <button
             onClick={handleDownload}
             disabled={isDownloading}

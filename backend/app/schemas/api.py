@@ -46,9 +46,12 @@ class UserResponse(BaseModel):
 class VoiceSettings(BaseModel):
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     pitch: float = Field(default=0.0, ge=-20.0, le=20.0)
+    volume: float = Field(default=0.0, ge=-50.0, le=200.0)
     stability: float = Field(default=0.5, ge=0.0, le=1.0)
     similarity: float = Field(default=0.75, ge=0.0, le=1.0)
     style: float = Field(default=0.0, ge=0.0, le=1.0)
+    expressiveness: float = Field(default=0.7, ge=0.0, le=1.0)
+    diversity: float = Field(default=0.7, ge=0.0, le=1.0)
     language: str = "en"
     format: str = "mp3"
 
@@ -92,12 +95,14 @@ class GenerationCreate(BaseModel):
     voice_id: str
     voice_type: Optional[str] = None  # "cloned" or "library"
     format: str = Field(default="mp3", pattern="^(mp3|wav)$")
-    speed: Optional[float] = 0.9
+    speed: Optional[float] = 1.0
     pitch: Optional[float] = 0.0
-    volume: Optional[float] = 100.0
+    volume: Optional[float] = 0.0
     stability: Optional[float] = 0.5
     similarity: Optional[float] = 0.75
     style: Optional[float] = 0.0
+    expressiveness: Optional[float] = 0.7
+    diversity: Optional[float] = 0.7
     project_document_id: Optional[str] = None
 
 class GenerationResponse(BaseModel):

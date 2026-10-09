@@ -70,37 +70,38 @@ class MockTTSProvider(TTSProvider):
     def _resolve_neural_voice(self, request: TTSRequest) -> str:
         # 1. Check if model explicitly specifies a recognized neural voice (e.g. for cloned voices)
         if request.model and "neural" in request.model.lower():
-            logger.info(f"[TTS Trace] Cloned voice resolved from request.model='{request.model}' (voice_id='{request.voice_id}')")
+            logger.info(f"[TTS Trace] Voice resolved from request.model='{request.model}' (voice_id='{request.voice_id}')")
             return request.model
 
-        p_id = (request.provider_voice_id or "").lower()
-        v_id = (request.voice_id or "").lower()
+        p_id = (request.provider_voice_id or "")
+        v_id = (request.voice_id or "")
 
         # 2. Check if already a recognized neural voice in provider_voice_id
-        if "neural" in p_id:
+        if "neural" in p_id.lower():
             logger.info(f"[TTS Trace] Voice resolved from provider_voice_id='{request.provider_voice_id}'")
             return request.provider_voice_id
 
         # 3. Check standard voice catalog mapping
-        if p_id in STANDARD_VOICE_MAP:
-            logger.info(f"[TTS Trace] Standard voice resolved: provider_voice_id='{p_id}' -> '{STANDARD_VOICE_MAP[p_id]}'")
-            return STANDARD_VOICE_MAP[p_id]
-        if v_id in STANDARD_VOICE_MAP:
-            logger.info(f"[TTS Trace] Standard voice resolved: voice_id='{v_id}' -> '{STANDARD_VOICE_MAP[v_id]}'")
-            return STANDARD_VOICE_MAP[v_id]
+        if p_id.lower() in STANDARD_VOICE_MAP:
+            logger.info(f"[TTS Trace] Standard voice resolved: provider_voice_id='{p_id}' -> '{STANDARD_VOICE_MAP[p_id.lower()]}'")
+            return STANDARD_VOICE_MAP[p_id.lower()]
+        if v_id.lower() in STANDARD_VOICE_MAP:
+            logger.info(f"[TTS Trace] Standard voice resolved: voice_id='{v_id}' -> '{STANDARD_VOICE_MAP[v_id.lower()]}'")
+            return STANDARD_VOICE_MAP[v_id.lower()]
 
         # 4. Cloned or custom voice resolution:
         # Generate a deterministic hash for consistent unique voice timbre per clone
         seed = f"{request.voice_id}_{request.provider_voice_id}"
         h = int(hashlib.md5(seed.encode("utf-8")).hexdigest(), 16)
 
-        gender = (request.gender or "neutral").lower()
-        if gender == "female":
-            pool = CUSTOM_FEMALE_VOICES
-        elif gender == "male":
+        gender = (request.gender or "").lower()
+        if gender == "male":
             pool = CUSTOM_MALE_VOICES
+        elif gender == "female":
+            pool = CUSTOM_FEMALE_VOICES
         else:
-            pool = CUSTOM_FEMALE_VOICES if (h % 2 == 0) else CUSTOM_MALE_VOICES
+            # Check pitch or default safely to male pool if male in voice_id
+            pool = CUSTOM_MALE_VOICES if "male" in seed.lower() else CUSTOM_FEMALE_VOICES
 
         selected = pool[h % len(pool)]
         logger.info(f"[TTS Trace] Cloned custom voice resolved: voice_id='{request.voice_id}', gender='{gender}' -> '{selected}'")
@@ -121,6 +122,11 @@ class MockTTSProvider(TTSProvider):
         # Volume adjustments (-90% to +100%, 100% = +0%)
         vol_pct = int(round(max(10.0, min(request.volume, 200.0)) - 100.0))
         vol_str = f"{vol_pct:+d}%"
+
+        logger.info(
+            f"[MockTTS Neural Synthesis] Voice='{voice_name}', Speed={request.speed}x (rate='{rate_str}'), "
+            f"Pitch={request.pitch} (pitch='{pitch_str}'), Volume={request.volume}% (vol='{vol_str}')"
+        )
 
         text_clean = request.text.strip()
         if not text_clean:

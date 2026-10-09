@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import AudioPlayer from "@/components/AudioPlayer";
 import VoiceSelectorModal, { Voice } from "@/components/VoiceSelectorModal";
 import UploadedVoiceModal from "@/components/UploadedVoiceModal";
-import { apiClient, ApiException, API_BASE_URL } from "@/lib/api";
+import { apiClient, ApiException, API_BASE_URL, getPlayableAudioUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { 
   Sparkles, 
@@ -24,7 +24,8 @@ import {
   Trash2,
   Zap,
   Globe,
-  Check
+  Check,
+  Clock
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -35,16 +36,53 @@ interface Preset {
   pitch: number;
   stability: number;
   style: number;
+  expressiveness?: number;
+  diversity?: number;
 }
 
 const PRESETS: Record<string, Preset> = {
-  natural: { name: "Natural", speed: 0.9, pitch: 0.0, stability: 0.5, style: 0.0 },
-  documentary: { name: "Documentary", speed: 0.85, pitch: -1.0, stability: 0.7, style: 0.2 },
-  storytelling: { name: "Storytelling", speed: 0.95, pitch: 0.5, stability: 0.45, style: 0.4 },
-  podcast: { name: "Podcast", speed: 1.0, pitch: 0.0, stability: 0.55, style: 0.3 },
-  energetic: { name: "Energetic", speed: 1.15, pitch: 1.5, stability: 0.4, style: 0.6 },
-  calm: { name: "Calm", speed: 0.8, pitch: -0.5, stability: 0.8, style: 0.1 },
+  natural: { name: "Natural", speed: 1.0, pitch: 0.0, stability: 0.5, style: 0.0, expressiveness: 0.7, diversity: 0.7 },
+  documentary: { name: "Documentary", speed: 0.9, pitch: -1.0, stability: 0.7, style: 0.2, expressiveness: 0.6, diversity: 0.5 },
+  storytelling: { name: "Storytelling", speed: 0.95, pitch: 0.5, stability: 0.45, style: 0.4, expressiveness: 0.85, diversity: 0.8 },
+  podcast: { name: "Podcast", speed: 1.0, pitch: 0.0, stability: 0.55, style: 0.3, expressiveness: 0.75, diversity: 0.7 },
+  energetic: { name: "Energetic", speed: 1.15, pitch: 1.5, stability: 0.4, style: 0.6, expressiveness: 0.9, diversity: 0.85 },
+  calm: { name: "Calm", speed: 0.85, pitch: -0.5, stability: 0.8, style: 0.1, expressiveness: 0.5, diversity: 0.6 },
 };
+
+const STARTER_PROMPTS = [
+  {
+    label: "YouTube intro",
+    text: "Hey everyone, welcome back to the channel! Today we're diving into something truly game-changing that will transform how you create content."
+  },
+  {
+    label: "Anime voiceover",
+    text: "You really believed you could defeat me? The power awakened in this sword is beyond anything your realm has ever witnessed!"
+  },
+  {
+    label: "Story narration",
+    text: "The ancient cobblestone road wound quietly through the misty pine forest, where shadows danced under the pale autumn moon."
+  },
+  {
+    label: "Podcast intro",
+    text: "Welcome to today's episode. Grab your favorite coffee, relax, and join us as we explore the uncharted frontiers of technology and storytelling."
+  },
+  {
+    label: "Language practice",
+    text: "Good morning and welcome! In today's listening session, we will practice everyday conversational English phrases with natural cadence."
+  },
+  {
+    label: "Meditation guidance",
+    text: "Take a slow, deep breath in through your nose. Hold for a moment, and gently let it go. Feel your mind settle into calm focus."
+  },
+  {
+    label: "Product demo",
+    text: "Meet the next-generation AI speech platform. Fast, authentic, and built from the ground up to bring your creative stories to life."
+  },
+  {
+    label: "Game character",
+    text: "Keep your guard up, warrior! The cavern ahead is fraught with danger, but glory and ancient treasures await those bold enough to proceed."
+  }
+];
 
 function StudioContent() {
   const { user } = useAuth();
@@ -74,9 +112,11 @@ function StudioContent() {
 
   // Settings
   const [presetKey, setPresetKey] = useState<string>("natural");
-  const [speed, setSpeed] = useState<number>(0.9);
+  const [speed, setSpeed] = useState<number>(1.0);
   const [pitch, setPitch] = useState<number>(0.0);
-  const [volume, setVolume] = useState<number>(100);
+  const [volume, setVolume] = useState<number>(0); // dB (-20 to +20, 0 = neutral)
+  const [expressiveness, setExpressiveness] = useState<number>(0.7); // 0.0 to 1.0
+  const [diversity, setDiversity] = useState<number>(0.7); // 0.0 to 1.0
   const [format, setFormat] = useState<"mp3" | "wav">("mp3");
 
   // Generation state
@@ -85,6 +125,7 @@ function StudioContent() {
   const [generationId, setGenerationId] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioDuration, setAudioDuration] = useState<number>(0);
+  const [generatedSpeed, setGeneratedSpeed] = useState<number | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
 
   // Entitlement usage
@@ -131,7 +172,7 @@ function StudioContent() {
     if (previewAudioRef.current) {
       previewAudioRef.current.pause();
     }
-    const targetUrl = url || `${API_BASE_URL}/voices/${voiceId}/preview`;
+    const targetUrl = url ? (getPlayableAudioUrl(url) || url) : `${API_BASE_URL}/voices/${voiceId}/preview`;
     const audio = new Audio(targetUrl);
     previewAudioRef.current = audio;
     audio.play().catch(() => {});
@@ -187,6 +228,12 @@ function StudioContent() {
       const targetVoiceId = voiceParam || storedVoiceId;
       const targetVoiceType = typeParam || storedVoiceType;
 
+      // 0. If user is visiting clone view or target type is cloned, select user's cloned voice immediately!
+      if ((categoryParam === "clone" || targetVoiceType === "cloned" || targetVoiceType === "clone") && cloneVoice) {
+        setSelectedVoice(cloneVoice);
+        return;
+      }
+
       // 1. If user currently has a cloned voice selected and no new explicit voiceParam was passed in URL, preserve it
       if (selectedVoice && (selectedVoice.type === "cloned" || selectedVoice.tier === "custom") && !voiceParam) {
         if (cloneVoice && cloneVoice.id === selectedVoice.id) {
@@ -234,8 +281,8 @@ function StudioContent() {
         return;
       }
 
-      // 5. Default fallback to first library voice ONLY if no cloned voice exists and no stored voice was set:
-      if (!selectedVoice && !targetVoiceId && data.length > 0 && targetVoiceType !== "cloned" && targetVoiceType !== "clone") {
+      // 5. Default fallback to first library voice if no voice is selected and not cloned target
+      if (!selectedVoice && data.length > 0 && targetVoiceType !== "cloned" && targetVoiceType !== "clone") {
         setSelectedVoice({ ...data[0], type: "library", voice_type: "library" });
       }
     } catch {
@@ -265,14 +312,17 @@ function StudioContent() {
     if (!categoryParam) return;
 
     if (categoryParam === "clone") {
-      if (userCloneData?.voice && (!selectedVoice || selectedVoice.id !== userCloneData.voice.id)) {
-        handleSelectVoice(userCloneData.voice);
+      if (userCloneData?.voice) {
+        if (!selectedVoice || selectedVoice.id !== userCloneData.voice.id) {
+          handleSelectVoice(userCloneData.voice);
+        }
+      } else if (userCloneData && !userCloneData.voice) {
+        setIsUploadedModalOpen(true);
       }
-      setIsUploadedModalOpen(true);
     } else if (categoryParam === "premium" || categoryParam === "elevenlabs" || categoryParam === "edge" || categoryParam === "library") {
       setIsVoiceModalOpen(true);
     }
-  }, [categoryParam]);
+  }, [categoryParam, userCloneData?.voice, selectedVoice?.id]);
 
   const loadUsage = async () => {
     try {
@@ -289,6 +339,8 @@ function StudioContent() {
     if (p) {
       setSpeed(p.speed);
       setPitch(p.pitch);
+      if (p.expressiveness !== undefined) setExpressiveness(p.expressiveness);
+      if (p.diversity !== undefined) setDiversity(p.diversity);
     }
   };
 
@@ -301,7 +353,22 @@ function StudioContent() {
       return;
     }
 
-    if (!selectedVoice) {
+    // Safety guard: determine effective voice
+    // If user is on the clone screen and has an active clone, ensure it is selected and used
+    let targetVoice = selectedVoice;
+    if (effectiveCategory === "clone" && userCloneData?.voice) {
+      if (!targetVoice || targetVoice.type !== "cloned" || targetVoice.id !== userCloneData.voice.id) {
+        targetVoice = {
+          ...userCloneData.voice,
+          type: "cloned",
+          voice_type: "clone",
+          tier: "custom",
+        };
+        setSelectedVoice(targetVoice);
+      }
+    }
+
+    if (!targetVoice) {
       const storedVoiceType = typeof window !== "undefined" ? localStorage.getItem("hk_selected_voice_type") : null;
       if (storedVoiceType === "cloned" || storedVoiceType === "clone") {
         setError({
@@ -318,13 +385,13 @@ function StudioContent() {
     }
 
     const isCloned =
-      selectedVoice.type === "cloned" ||
-      selectedVoice.tier === "custom" ||
-      selectedVoice.voice_type === "clone" ||
-      Boolean(selectedVoice.owner_user_id);
+      targetVoice.type === "cloned" ||
+      targetVoice.tier === "custom" ||
+      targetVoice.voice_type === "clone" ||
+      Boolean(targetVoice.owner_user_id);
     const voiceType: "cloned" | "library" = isCloned ? "cloned" : "library";
 
-    if (isCloned && !selectedVoice.id) {
+    if (isCloned && !targetVoice.id) {
       setError({
         code: "CLONED_VOICE_MISSING",
         message: "Cloned voice ID is missing. Please select or create your cloned voice.",
@@ -333,12 +400,12 @@ function StudioContent() {
     }
 
     console.log(`[Studio Voice Routing] Dispatching TTS request:`, {
-      id: selectedVoice.id,
-      name: selectedVoice.name,
+      id: targetVoice.id,
+      name: targetVoice.name,
       voice_type: voiceType,
-      tier: selectedVoice.tier,
-      model: selectedVoice.model,
-      provider: selectedVoice.provider,
+      tier: targetVoice.tier,
+      model: targetVoice.model,
+      provider: targetVoice.provider,
     });
 
     setIsGenerating(true);
@@ -349,13 +416,15 @@ function StudioContent() {
     try {
       const payload = {
         text,
-        voice_id: selectedVoice.id,
+        voice_id: targetVoice.id,
         voice_type: voiceType,
         project_document_id: docIdParam || undefined,
         format,
         speed,
         pitch,
         volume,
+        expressiveness,
+        diversity,
         stability: PRESETS[presetKey]?.stability || 0.5,
         style: PRESETS[presetKey]?.style || 0.0,
       };
@@ -391,6 +460,7 @@ function StudioContent() {
           setIsGenerating(false);
           setAudioUrl(res.audio_url);
           setAudioDuration(res.actual_audio_seconds);
+          setGeneratedSpeed(res.settings_json?.speed ?? speed);
           console.log(`[Studio Voice Routing] TTS Completed successfully:`, {
             id: res.id,
             voice_id: res.voice_id,
@@ -473,9 +543,11 @@ function StudioContent() {
                 <span className="font-semibold text-sm text-gray-200">Script Editor</span>
               </div>
 
-              {/* Character & Estimated Duration counter */}
+              {/* Character & Credit counter & Estimated Duration */}
               <div className="flex items-center space-x-3 text-xs text-gray-400 font-mono">
                 <span>{charCount.toLocaleString()} chars</span>
+                <span>•</span>
+                <span className="text-indigo-300 font-semibold">{charCount.toLocaleString()} credits (1 credit/char)</span>
                 <span>•</span>
                 <span>~{estimatedSeconds}s</span>
               </div>
@@ -485,10 +557,41 @@ function StudioContent() {
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Paste or type your script here..."
+              placeholder="Paste or type your script here, or select a starter template below..."
               rows={12}
               className="w-full mt-4 flex-1 bg-transparent text-gray-100 placeholder-gray-600 resize-none focus:outline-none text-base leading-relaxed"
             />
+
+            {/* Quick Starter Chips */}
+            <div className="mt-3 pt-3 border-t border-[#1C2030] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-gray-400 flex items-center space-x-1.5">
+                  <Sparkles className="w-3 h-3 text-indigo-400" />
+                  <span>Quick Starter Scripts</span>
+                </span>
+                {charCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setText("")}
+                    className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    Clear Editor
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {STARTER_PROMPTS.map((starter) => (
+                  <button
+                    key={starter.label}
+                    type="button"
+                    onClick={() => setText(starter.text)}
+                    className="px-2.5 py-1 rounded-lg bg-[#161826] hover:bg-[#202438] border border-[#23273D] text-[11px] font-medium text-gray-300 hover:text-white transition-all"
+                  >
+                    {starter.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Error banner if any */}
             {error && (
@@ -509,6 +612,19 @@ function StudioContent() {
             )}
           </div>
 
+          {/* 5-Hour Auto-Delete Lifecycle Policy Notice */}
+          <div className="p-3.5 rounded-xl bg-[#12141F] border border-[#202436] flex items-center justify-between text-xs text-gray-400 shadow-md">
+            <div className="flex items-center space-x-2.5">
+              <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                <strong className="text-gray-200">5-Hour Auto Cleanup:</strong> Generated voice-overs and temporary audio files are automatically purged after 5 hours.
+              </span>
+            </div>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono shrink-0 ml-3">
+              Lifecycle Active
+            </span>
+          </div>
+
           {/* Generated Audio Player output */}
           <AudioPlayer
             src={audioUrl}
@@ -516,6 +632,7 @@ function StudioContent() {
             voiceName={selectedVoice?.name}
             duration={audioDuration}
             format={format}
+            speed={generatedSpeed ?? speed}
           />
         </div>
 
@@ -564,7 +681,14 @@ function StudioContent() {
               // CLONE SOURCE: shows cloned voice + clone management/upload option
               userCloneData?.voice ? (
                 <div className="space-y-3">
-                  <div className="p-3.5 rounded-xl bg-[#0B0C14] border border-teal-500/30 flex items-center justify-between">
+                  <div
+                    onClick={() => handleSelectVoice(userCloneData.voice!)}
+                    className={`p-3.5 rounded-xl bg-[#0B0C14] border transition-all cursor-pointer flex items-center justify-between ${
+                      selectedVoice?.id === userCloneData.voice.id
+                        ? "border-teal-500 ring-1 ring-teal-500/50 shadow-md shadow-teal-500/10"
+                        : "border-[#22263C] hover:border-teal-500/40"
+                    }`}
+                  >
                     <div className="flex items-center space-x-3">
                       <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500/20 to-emerald-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400 font-bold text-sm">
                         {userCloneData.voice.name[0]}
@@ -572,10 +696,16 @@ function StudioContent() {
                       <div>
                         <div className="flex items-center space-x-2">
                           <span className="font-semibold text-sm text-white">{userCloneData.voice.name}</span>
-                          <span className="px-1.5 py-0.2 text-[9px] font-bold rounded flex items-center space-x-1 bg-teal-500/20 text-teal-300 border border-teal-500/30">
-                            <Check className="w-2.5 h-2.5 stroke-[3]" />
-                            <span>Selected</span>
-                          </span>
+                          {selectedVoice?.id === userCloneData.voice.id ? (
+                            <span className="px-1.5 py-0.2 text-[9px] font-bold rounded flex items-center space-x-1 bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                              <Check className="w-2.5 h-2.5 stroke-[3]" />
+                              <span>Selected</span>
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 text-[9px] font-medium rounded bg-gray-800 text-gray-400 border border-gray-700">
+                              Click to Select
+                            </span>
+                          )}
                           <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-teal-500/20 text-teal-300 border border-teal-500/30">
                             1 of 1 Slot
                           </span>
@@ -588,7 +718,10 @@ function StudioContent() {
 
                     <button
                       type="button"
-                      onClick={() => handlePlayPreview(userCloneData.voice!.id, userCloneData.voice!.preview_audio_url)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePlayPreview(userCloneData.voice!.id, userCloneData.voice!.preview_audio_url);
+                      }}
                       className={`p-2 rounded-lg transition-colors flex items-center space-x-1.5 text-xs font-semibold ${
                         playingId === userCloneData.voice.id
                           ? "bg-teal-600 text-white shadow-md shadow-teal-600/30"
@@ -657,7 +790,7 @@ function StudioContent() {
                         ? "bg-amber-500/20 border-amber-500/30 text-amber-300"
                         : "bg-indigo-500/20 border-indigo-500/30 text-indigo-300"
                     }`}>
-                      {selectedVoice ? selectedVoice.name[0] : <Volume2 className="w-4 h-4" />}
+                      {selectedVoice?.name ? selectedVoice.name[0] : <Volume2 className="w-4 h-4" />}
                     </div>
                     <div>
                       <div className="flex items-center space-x-2">
@@ -751,11 +884,11 @@ function StudioContent() {
               </div>
             )}
 
-            {/* Sliders: Speed & Pitch */}
+            {/* Sliders: Speed, Volume (dB), Expressiveness, Diversity, Pitch */}
             <div className="space-y-3.5 pt-2 border-t border-[#1C1F30]">
               <div>
                 <div className="flex items-center justify-between text-xs text-gray-400 mb-1.5 font-medium">
-                  <span>Speaking Speed</span>
+                  <span>Speed</span>
                   <span className="font-mono text-gray-200">{speed}x</span>
                 </div>
                 <input
@@ -771,7 +904,55 @@ function StudioContent() {
 
               <div>
                 <div className="flex items-center justify-between text-xs text-gray-400 mb-1.5 font-medium">
-                  <span>Pitch Adjustment</span>
+                  <span>Volume</span>
+                  <span className="font-mono text-gray-200">{volume > 0 ? `+${volume}` : volume} dB</span>
+                </div>
+                <input
+                  type="range"
+                  min="-20"
+                  max="20"
+                  step="1"
+                  value={volume}
+                  onChange={(e) => setVolume(parseInt(e.target.value, 10))}
+                  className="w-full h-1.5 bg-[#202438] rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-xs text-gray-400 mb-1.5 font-medium">
+                  <span>Expressiveness</span>
+                  <span className="font-mono text-indigo-300">{Math.round(expressiveness * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.0"
+                  max="1.0"
+                  step="0.05"
+                  value={expressiveness}
+                  onChange={(e) => setExpressiveness(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-[#202438] rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-xs text-gray-400 mb-1.5 font-medium">
+                  <span>Diversity</span>
+                  <span className="font-mono text-indigo-300">{Math.round(diversity * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.0"
+                  max="1.0"
+                  step="0.05"
+                  value={diversity}
+                  onChange={(e) => setDiversity(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-[#202438] rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-xs text-gray-400 mb-1.5 font-medium">
+                  <span>Pitch Fine-Tuning</span>
                   <span className="font-mono text-gray-200">{pitch > 0 ? `+${pitch}` : pitch}</span>
                 </div>
                 <input
@@ -781,22 +962,6 @@ function StudioContent() {
                   step="0.5"
                   value={pitch}
                   onChange={(e) => setPitch(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-[#202438] rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between text-xs text-gray-400 mb-1.5 font-medium">
-                  <span>Volume</span>
-                  <span className="font-mono text-gray-200">{volume}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="10"
-                  max="200"
-                  step="5"
-                  value={volume}
-                  onChange={(e) => setVolume(parseInt(e.target.value, 10))}
                   className="w-full h-1.5 bg-[#202438] rounded-lg appearance-none cursor-pointer accent-indigo-500"
                 />
               </div>

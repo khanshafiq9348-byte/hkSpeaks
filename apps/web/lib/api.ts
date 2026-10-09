@@ -1,8 +1,25 @@
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   (typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8000/v1`
+    ? `${window.location.origin}/v1`
     : "http://127.0.0.1:8000/v1");
+
+/**
+ * Normalizes an audio URL to ensure it is playable from any device/origin.
+ * Converts hardcoded 'http://localhost:8000/v1/storage/...' to match current origin.
+ */
+export function getPlayableAudioUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (typeof window !== "undefined") {
+    if (url.includes("localhost:8000/v1/storage/") || url.includes("127.0.0.1:8000/v1/storage/")) {
+      return url.replace(/^https?:\/\/(localhost|127\.0\.0\.1):8000\/v1\/storage\//, `${window.location.origin}/v1/storage/`);
+    }
+    if (url.startsWith("/v1/storage/")) {
+      return `${window.location.origin}${url}`;
+    }
+  }
+  return url;
+}
 
 export interface ApiError {
   code: string;
@@ -61,12 +78,34 @@ export async function apiClient<T>(
       headers,
     });
   } catch (netErr: any) {
-    throw new ApiException(0, {
-      code: "NETWORK_ERROR",
-      message: netErr?.message
-        ? `Cannot reach backend at ${url}: ${netErr.message}`
-        : `Connection to backend server at ${url} failed. Ensure backend is running.`,
-    });
+    // Transparent host fallback (localhost <-> 127.0.0.1) for IPv4/IPv6 resilience
+    let altResponse: Response | null = null;
+    if (url.includes("localhost:8000")) {
+      const altUrl = url.replace("localhost:8000", "127.0.0.1:8000");
+      try {
+        altResponse = await fetch(altUrl, { ...options, headers });
+      } catch {
+        altResponse = null;
+      }
+    } else if (url.includes("127.0.0.1:8000")) {
+      const altUrl = url.replace("127.0.0.1:8000", "localhost:8000");
+      try {
+        altResponse = await fetch(altUrl, { ...options, headers });
+      } catch {
+        altResponse = null;
+      }
+    }
+
+    if (altResponse) {
+      response = altResponse;
+    } else {
+      throw new ApiException(0, {
+        code: "NETWORK_ERROR",
+        message: netErr?.message
+          ? `Cannot reach backend at ${url}: ${netErr.message}`
+          : `Connection to backend server at ${url} failed. Ensure backend is running.`,
+      });
+    }
   }
 
   if (!response.ok) {

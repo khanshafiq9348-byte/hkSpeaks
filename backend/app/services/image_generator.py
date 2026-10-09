@@ -38,23 +38,30 @@ class ImageGeneratorService:
         """
         import httpx
         import random
+        import re
 
-        clean_prompt = " ".join(prompt.split())[:350]
+        # Strip any leading numbers or scene labels so they are never rendered inside the image
+        raw_clean = re.sub(r'^(?:Scene\s*\d*|Shot\s*\d*|Prompt\s*\d*|\d+)[.:]\s*', '', prompt, flags=re.IGNORECASE)
+        raw_clean = re.sub(r'^(?:Scene\s*\d*|Shot\s*\d*|Prompt\s*\d*|\d+)\s+', '', raw_clean, flags=re.IGNORECASE)
+        raw_clean = re.sub(r'["“”]', '', raw_clean)
+        clean_prompt = " ".join(raw_clean.split())[:350]
         if not clean_prompt:
             raise ValueError("Empty prompt text provided.")
 
         encoded_prompt = urllib.parse.quote(clean_prompt)
+        negative_instruction = "no text, no numbers, no letters, no captions, no labels, no typography, no written words"
+        encoded_neg = urllib.parse.quote(negative_instruction)
         max_attempts = 5
         image_bytes: Optional[bytes] = None
         last_error: Optional[str] = None
 
-        # Build candidate URLs with primary dimensions and fallback dimensions
+        # Build candidate URLs with primary dimensions, fallback dimensions, and negative parameters
         url_candidates = [
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={seed}&nologo=true",
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={min(width, 1024)}&height={min(height, 1024)}&seed={seed}&nologo=true",
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&nologo=true",
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}",
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={min(width, 768)}&height={min(height, 768)}"
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={seed}&nologo=true&negative={encoded_neg}",
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={min(width, 1024)}&height={min(height, 1024)}&seed={seed}&nologo=true&negative={encoded_neg}",
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&nologo=true&negative={encoded_neg}",
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&negative={encoded_neg}",
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={min(width, 768)}&height={min(height, 768)}&negative={encoded_neg}"
         ]
 
         async with httpx.AsyncClient(

@@ -10,12 +10,14 @@ class TTSRequest(BaseModel):
     locale: str = "en-US"
     gender: Optional[str] = None
     model: str = "standard-v1"
-    speed: float = 0.9
+    speed: float = 1.0
     pitch: float = 0.0
-    volume: float = 100.0
+    volume: float = 0.0
     style: float = 0.0
     stability: float = 0.5
     similarity: float = 0.75
+    expressiveness: float = 0.7
+    diversity: float = 0.7
     format: str = "mp3"  # mp3 or wav
     sample_rate: int = 44100
     tier: Optional[str] = None

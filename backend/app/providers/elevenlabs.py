@@ -24,12 +24,20 @@ class ElevenLabsAdapter(TTSProvider):
             "Content-Type": "application/json",
             "Accept": "audio/mpeg" if request.format == "mp3" else "audio/wav"
         }
+        stability_val = request.stability
+        if getattr(request, "expressiveness", None) is not None:
+            # Expressiveness inversely correlates with rigidity/stability in ElevenLabs
+            stability_val = round(max(0.1, min(1.0 - (request.expressiveness * 0.5), 0.95)), 2)
+        similarity_val = getattr(request, "diversity", request.similarity)
+        if similarity_val is None:
+            similarity_val = request.similarity
+
         payload = {
             "text": request.text,
             "model_id": request.model if request.model.startswith("eleven_") else "eleven_multilingual_v2",
             "voice_settings": {
-                "stability": request.stability,
-                "similarity_boost": request.similarity,
+                "stability": stability_val,
+                "similarity_boost": similarity_val,
                 "style": request.style
             }
         }
