@@ -154,13 +154,15 @@ export default function VoiceSelectorModal({
   // Audio Playback State
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prevIsOpenRef = useRef(false);
 
   // Submodal for Cloned Voice Creation
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
 
-  // Synchronize initial category preset
+  // Synchronize initial category preset ONLY on modal open transition
   useEffect(() => {
     if (!isOpen) {
+      prevIsOpenRef.current = false;
       if (audioRef.current) {
         audioRef.current.pause();
       }
@@ -168,43 +170,56 @@ export default function VoiceSelectorModal({
       return;
     }
 
-    if (initialCategory === "clone") {
-      setActiveCategoryTab("clone");
-      setSelectedTier("custom");
-      setSelectedProvider("all");
-      return;
-    }
-    if (initialCategory === "premium") {
-      setActiveCategoryTab("premium");
-      setSelectedTier("premium");
-      setSelectedProvider("all");
-      return;
-    }
-    if (initialCategory === "elevenlabs") {
-      setActiveCategoryTab("elevenlabs");
-      setSelectedProvider("elevenlabs");
-      setSelectedTier("all");
-      return;
-    }
-    if (initialCategory === "edge") {
-      setActiveCategoryTab("edge");
-      setSelectedProvider("edge");
-      setSelectedTier("all");
-      return;
-    }
-    if (initialCategory === "library") {
-      setActiveCategoryTab("library");
-      setSelectedTier("all");
-      setSelectedProvider("all");
-      return;
-    }
+    // Only apply initial preset on modal open transition
+    if (!prevIsOpenRef.current) {
+      prevIsOpenRef.current = true;
 
-    // Default to preserving current category tab
-    const current = voices.find((v) => v.id === selectedVoiceId);
-    if (current && (current.tier === "custom" || current.voice_type === "clone" || Boolean(current.owner_user_id))) {
-      setActiveCategoryTab("clone");
-    } else {
-      setActiveCategoryTab("all");
+      const hasClones = (voices || []).some((v) => isClonedVoice(v));
+      const hasElevenLabs = (voices || []).some((v) => v?.provider?.toLowerCase() === "elevenlabs");
+      const hasPremium = (voices || []).some((v) => v?.tier === "premium" || v?.tier === "ultra");
+
+      if (initialCategory === "clone") {
+        setActiveCategoryTab(hasClones ? "clone" : "all");
+        setSelectedTier(hasClones ? "custom" : "all");
+        setSelectedProvider("all");
+        return;
+      }
+      if (initialCategory === "premium") {
+        setActiveCategoryTab(hasPremium ? "premium" : "all");
+        setSelectedTier(hasPremium ? "premium" : "all");
+        setSelectedProvider("all");
+        return;
+      }
+      if (initialCategory === "elevenlabs") {
+        setActiveCategoryTab(hasElevenLabs ? "elevenlabs" : "all");
+        setSelectedProvider(hasElevenLabs ? "elevenlabs" : "all");
+        setSelectedTier("all");
+        return;
+      }
+      if (initialCategory === "edge") {
+        setActiveCategoryTab("edge");
+        setSelectedProvider("all");
+        setSelectedTier("all");
+        return;
+      }
+      if (initialCategory === "library") {
+        setActiveCategoryTab("library");
+        setSelectedTier("all");
+        setSelectedProvider("all");
+        return;
+      }
+
+      // Default to preserving current category tab if clone exists
+      const current = (voices || []).find((v) => v.id === selectedVoiceId);
+      if (current && isClonedVoice(current) && hasClones) {
+        setActiveCategoryTab("clone");
+        setSelectedTier("custom");
+        setSelectedProvider("all");
+      } else {
+        setActiveCategoryTab("all");
+        setSelectedProvider("all");
+        setSelectedTier("all");
+      }
     }
   }, [isOpen, initialCategory, selectedVoiceId, voices]);
 
@@ -363,22 +378,29 @@ export default function VoiceSelectorModal({
 
   // Filtered voices
   const filteredVoices = useMemo(() => {
-    return voices.filter((v) => {
+    const list = voices || [];
+    const hasClones = list.some((v) => isClonedVoice(v));
+    const hasElevenLabs = list.some((v) => (v?.provider || "").toLowerCase() === "elevenlabs");
+
+    return list.filter((v) => {
+      if (!v) return false;
       const isClone = isClonedVoice(v);
 
       // Category Tab filter
-      if (activeCategoryTab === "clone" && !isClone) return false;
+      if (activeCategoryTab === "clone" && hasClones && !isClone) return false;
       if (activeCategoryTab === "library" && isClone) return false;
       if (activeCategoryTab === "premium" && !(v.tier === "premium" || v.tier === "ultra")) return false;
-      if (activeCategoryTab === "edge" && !(v.provider === "edge" || v.slug?.includes("neural"))) return false;
-      if (activeCategoryTab === "elevenlabs" && v.provider !== "elevenlabs") return false;
+      if (activeCategoryTab === "edge" && !((v.provider || "edge").toLowerCase() === "edge" || v.slug?.includes("neural"))) return false;
+      if (activeCategoryTab === "elevenlabs" && hasElevenLabs && (v.provider || "").toLowerCase() !== "elevenlabs") return false;
 
       // Provider filter
       if (selectedProvider !== "all") {
         if (selectedProvider === "cloned") {
           if (!isClone) return false;
-        } else if (v.provider?.toLowerCase() !== selectedProvider.toLowerCase()) {
-          return false;
+        } else {
+          const vProv = (v.provider || "edge").toLowerCase();
+          const targetProv = selectedProvider.toLowerCase();
+          if (vProv !== targetProv) return false;
         }
       }
 
@@ -391,7 +413,7 @@ export default function VoiceSelectorModal({
 
       // Language filter
       if (selectedLanguage !== "all") {
-        if (v.language?.toLowerCase() !== selectedLanguage.toLowerCase()) {
+        if ((v.language || "").toLowerCase() !== selectedLanguage.toLowerCase()) {
           return false;
         }
       }
@@ -400,7 +422,7 @@ export default function VoiceSelectorModal({
       if (selectedTier !== "all") {
         if (selectedTier === "custom" || selectedTier === "cloned") {
           if (!isClone) return false;
-        } else if (v.tier?.toLowerCase() !== selectedTier.toLowerCase()) {
+        } else if ((v.tier || "standard").toLowerCase() !== selectedTier.toLowerCase()) {
           return false;
         }
       }

@@ -133,18 +133,24 @@ function StudioContent() {
 
   // Determine effective category based on URL or current voice
   const effectiveCategory = useMemo(() => {
+    const hasElevenLabs = voices.some((v) => (v?.provider || "").toLowerCase() === "elevenlabs");
+    const hasClones = Boolean(userCloneData?.voice || voices.some((v) => v.type === "cloned" || v.tier === "custom" || v.voice_type === "clone"));
+
+    if (categoryParam === "elevenlabs") return hasElevenLabs ? "elevenlabs" : "all";
+    if (categoryParam === "clone") return hasClones ? "clone" : "all";
     if (categoryParam) return categoryParam;
+
     if (selectedVoice) {
-      if (selectedVoice.type === "cloned" || selectedVoice.tier === "custom" || selectedVoice.voice_type === "clone" || Boolean(selectedVoice.owner_user_id)) {
+      if ((selectedVoice.type === "cloned" || selectedVoice.tier === "custom" || selectedVoice.voice_type === "clone" || Boolean(selectedVoice.owner_user_id)) && hasClones) {
         return "clone";
       }
-      if (selectedVoice.provider === "elevenlabs") return "elevenlabs";
+      if (selectedVoice.provider === "elevenlabs" && hasElevenLabs) return "elevenlabs";
       if (selectedVoice.tier === "premium" || selectedVoice.tier === "ultra") return "premium";
       if (selectedVoice.provider === "edge") return "edge";
-      return "library";
+      return "all";
     }
-    return "library";
-  }, [categoryParam, selectedVoice]);
+    return "all";
+  }, [categoryParam, selectedVoice, voices, userCloneData?.voice]);
 
   useEffect(() => {
     loadVoices();

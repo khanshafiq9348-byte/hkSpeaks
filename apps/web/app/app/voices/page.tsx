@@ -397,20 +397,12 @@ function VoicesContent() {
       // Provider
       let matchesProvider = true;
       if (selectedProvider !== "all") {
-        if (selectedProvider === "elevenlabs") {
-          matchesProvider = v.provider === "elevenlabs";
-        } else if (selectedProvider === "edge") {
-          matchesProvider = v.provider === "edge";
-        } else if (selectedProvider === "openai") {
-          matchesProvider = v.provider === "openai";
-        } else if (selectedProvider === "amazon") {
-          matchesProvider = v.provider === "amazon";
-        } else if (selectedProvider === "google") {
-          matchesProvider = v.provider === "google";
-        } else if (selectedProvider === "azure") {
-          matchesProvider = v.provider === "azure";
-        } else if (selectedProvider === "other") {
-          matchesProvider = v.provider !== "elevenlabs" && v.provider !== "edge";
+        const vProv = (v.provider || "edge").toLowerCase();
+        const provTarget = selectedProvider.toLowerCase();
+        if (provTarget === "other") {
+          matchesProvider = vProv !== "elevenlabs" && vProv !== "edge";
+        } else {
+          matchesProvider = vProv === provTarget;
         }
       }
 
@@ -425,19 +417,19 @@ function VoicesContent() {
       // Tier
       let matchesTier = true;
       if (selectedTier !== "all") {
-        matchesTier = v.tier?.toLowerCase() === selectedTier;
+        matchesTier = (v.tier || "standard").toLowerCase() === selectedTier.toLowerCase();
       }
 
       // Gender
       let matchesGender = true;
       if (selectedGender !== "all") {
-        matchesGender = v.gender?.toLowerCase() === selectedGender;
+        matchesGender = (v.gender || "").toLowerCase() === selectedGender.toLowerCase();
       }
 
       // Language
       let matchesLanguage = true;
       if (selectedLanguage !== "all") {
-        matchesLanguage = v.language === selectedLanguage;
+        matchesLanguage = (v.language || "").toLowerCase() === selectedLanguage.toLowerCase();
       }
 
       return matchesSearch && matchesProvider && matchesTier && matchesGender && matchesLanguage && matchesStyle;
@@ -835,6 +827,34 @@ function VoicesContent() {
                 );
               })}
             </div>
+
+            {/* Empty State */}
+            {filteredVoices.length === 0 && (
+              <div className="p-8 text-center space-y-3 bg-[#0A0C14] rounded-2xl border border-[#181C2E] my-4">
+                <div className="w-12 h-12 rounded-2xl bg-[#141727] border border-[#22263C] text-gray-400 mx-auto flex items-center justify-center">
+                  <Search className="w-6 h-6 text-gray-500" />
+                </div>
+                <h4 className="text-sm font-semibold text-gray-200">No voices match your filters</h4>
+                <p className="text-xs text-gray-400 max-w-sm mx-auto">
+                  Try searching for a different name, accent, or reset your filters to view all available voices.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedProvider("all");
+                    setSelectedStyle("all");
+                    setSelectedTier("all");
+                    setSelectedGender("all");
+                    setSelectedLanguage("all");
+                    setSearch("");
+                  }}
+                  className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Reset All Filters</span>
+                </button>
+              </div>
+            )}
 
             {/* Bottom Pagination */}
             {totalPages > 1 && (
