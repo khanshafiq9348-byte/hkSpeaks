@@ -37,6 +37,30 @@ PID_FILE = ROOT_DIR / "data" / "supervisor.pid"
 SUPERVISOR_LOG = ROOT_DIR / "data" / "supervisor.log"
 BACKEND_LOG = ROOT_DIR / "data" / "backend.log"
 FRONTEND_LOG = ROOT_DIR / "data" / "frontend.log"
+TUNNEL_LOG = ROOT_DIR / "data" / "tunnel.log"
+PUBLIC_BACKEND_URL_FILE = ROOT_DIR / "data" / "public_backend_url.txt"
+
+def get_public_backend_url() -> Optional[str]:
+    if PUBLIC_BACKEND_URL_FILE.exists():
+        try:
+            url = PUBLIC_BACKEND_URL_FILE.read_text(encoding="utf-8").strip()
+            if url.startswith("https://"):
+                return url
+        except Exception:
+            pass
+    if TUNNEL_LOG.exists():
+        import re
+        try:
+            content = TUNNEL_LOG.read_text(encoding="utf-8", errors="ignore")
+            matches = re.findall(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
+            if matches:
+                url = matches[-1]
+                PUBLIC_BACKEND_URL_FILE.write_text(url, encoding="utf-8")
+                return url
+        except Exception:
+            pass
+    return None
+
 
 def log_msg(msg: str):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -350,9 +374,33 @@ class Supervisor:
         self.frontend_proc: Optional[subprocess.Popen] = None
         self.backend_log = None
         self.frontend_log = None
+        self.tunnel_proc: Optional[subprocess.Popen] = None
+        self.tunnel_log = None
         self.running = True
         self.backend_fail_count = 0
         self.frontend_fail_count = 0
+
+    def start_tunnel(self):
+        if self.tunnel_proc and self.tunnel_proc.poll() is None:
+            return
+        cmd = ["npx.cmd", "--yes", "cloudflared", "tunnel", "--url", f"http://127.0.0.1:{BACKEND_PORT}"]
+        TUNNEL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        if self.tunnel_log:
+            try: self.tunnel_log.close()
+            except Exception: pass
+        self.tunnel_log = open(TUNNEL_LOG, "a", encoding="utf-8")
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        try:
+            self.tunnel_proc = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT_DIR),
+                stdout=self.tunnel_log,
+                stderr=subprocess.STDOUT,
+                creationflags=flags
+            )
+            log_msg(f"[Supervisor] Public Backend Tunnel started (PID {self.tunnel_proc.pid}).")
+        except Exception as e:
+            log_msg(f"[Supervisor] Could not start public tunnel: {e}")
 
     def start_backend(self):
         if is_backend_healthy():
@@ -426,6 +474,9 @@ class Supervisor:
         if self.frontend_proc:
             kill_process_tree(self.frontend_proc.pid)
             self.frontend_proc = None
+        if self.tunnel_proc:
+            kill_process_tree(self.tunnel_proc.pid)
+            self.tunnel_proc = None
         if self.backend_log:
             try: self.backend_log.close()
             except Exception: pass
@@ -434,6 +485,10 @@ class Supervisor:
             try: self.frontend_log.close()
             except Exception: pass
             self.frontend_log = None
+        if self.tunnel_log:
+            try: self.tunnel_log.close()
+            except Exception: pass
+            self.tunnel_log = None
         free_port(BACKEND_PORT, "Backend")
         free_port(FRONTEND_PORT, "Frontend")
         if PID_FILE.exists():
@@ -605,7 +660,9 @@ def print_status(verbose: bool = True) -> int:
         print(f"  Backend URL:     {BACKEND_HEALTH_URL}")
         print(f"  Frontend Port:   {FRONTEND_PORT} (PID: {f_pids or 'None'})")
         print(f"  Frontend Health: {'HEALTHY (200 OK)' if f_health else 'DOWN / UNHEALTHY'}")
-        print(f"  Frontend URL:    {FRONTEND_HEALTH_URL}")
+        pub_backend = get_public_backend_url()
+        print(f"  Public Backend:  {pub_backend if pub_backend else 'https://bracelets-scientists-win-film.trycloudflare.com'}")
+        print(f"  Vercel Frontend: https://hk-speaks-zl9v.vercel.app")
         print("=========================================================")
     return 0 if (b_health and f_health) else 1
 

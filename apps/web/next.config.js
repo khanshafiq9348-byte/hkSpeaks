@@ -5,7 +5,9 @@ const nextConfig = {
     unoptimized: true
   },
   async rewrites() {
-    const rawTarget = process.env.BACKEND_INTERNAL_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+    const isVercel = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+    const defaultBackend = isVercel ? 'https://bracelets-scientists-win-film.trycloudflare.com' : 'http://127.0.0.1:8000';
+    const rawTarget = process.env.BACKEND_INTERNAL_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || defaultBackend;
     const target = rawTarget.replace(/\/v1\/?$/, '');
     return [
       {
