@@ -64,9 +64,10 @@ async def run_render_job(render_job_id: str):
             job.current_step = "Compiling timeline clips..."
             await db.commit()
 
-            # Assemble clips data for renderer
+            # Assemble clips data for renderer strictly ordered by timeline playback
+            sorted_clips = sorted(project.timeline_clips, key=lambda c: (c.track_index, c.start_time, c.clip_index))
             clips_data = []
-            for c in project.timeline_clips:
+            for c in sorted_clips:
                 img_path = storage_service.get_local_path(c.asset.storage_key)
                 if not img_path or not os.path.exists(img_path):
                     raise FileNotFoundError(f"Asset image missing on disk: {c.asset.filename}")
@@ -136,8 +137,6 @@ async def run_render_job(render_job_id: str):
             await db.commit()
 
             download_url = f"{storage_service.provider_url if hasattr(storage_service, 'provider_url') else '/v1/storage'}/{render_storage_key}"
-            if download_url.startswith("/v1/storage"):
-                download_url = f"http://localhost:8000{download_url}"
 
             # Create RenderOutput
             output = RenderOutput(

@@ -17,6 +17,7 @@ import {
   submitVideoRender,
   getRenderJobStatus,
   getVideoProjectDownloadUrl,
+  normalizeMediaUrl,
 } from "@/lib/video-api";
 import { useAuth } from "@/lib/auth-context";
 import Navbar from "@/components/Navbar";
@@ -167,7 +168,10 @@ export default function DocumentaryStudioPage() {
     if (!files || files.length === 0) return;
     try {
       setUploading(true);
-      await uploadVideoAssets(projectId, Array.from(files), "image");
+      const sortedFiles = Array.from(files).sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+      );
+      await uploadVideoAssets(projectId, sortedFiles, "image");
       await loadProject();
     } catch (err: any) {
       alert(err?.message || "Failed to upload images");
@@ -727,7 +731,7 @@ export default function DocumentaryStudioPage() {
                 {project.voiceover.url && (
                   <audio
                     ref={audioRef}
-                    src={project.voiceover.url}
+                    src={normalizeMediaUrl(project.voiceover.url)}
                     onTimeUpdate={handleAudioTimeUpdate}
                     onEnded={() => setIsPlayingAudio(false)}
                     className="w-full h-7 mt-1"
@@ -789,7 +793,7 @@ export default function DocumentaryStudioPage() {
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={asset.url}
+                      src={normalizeMediaUrl(asset.url)}
                       alt={asset.filename}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                     />
@@ -819,7 +823,7 @@ export default function DocumentaryStudioPage() {
             <div className="w-full max-w-2xl flex flex-col items-center">
               <div className="w-full rounded-2xl overflow-hidden border border-purple-500/30 bg-black shadow-2xl aspect-video relative">
                 <video
-                  src={latestRenderOutput.download_url || latestRenderOutput.url}
+                  src={normalizeMediaUrl(latestRenderOutput.download_url || latestRenderOutput.url)}
                   controls
                   autoPlay
                   className="w-full h-full object-contain"
@@ -843,7 +847,7 @@ export default function DocumentaryStudioPage() {
                   <div className="w-full h-full relative overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={selectedAsset.url}
+                      src={normalizeMediaUrl(selectedAsset.url)}
                       alt={selectedAsset.filename}
                       className={`w-full h-full object-cover ${isPlayingAudio ? motionCss : ""}`}
                     />
@@ -958,7 +962,7 @@ export default function DocumentaryStudioPage() {
                       }`}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={asset.url} alt={asset.filename} className="w-full h-full object-cover" />
+                      <img src={normalizeMediaUrl(asset.url)} alt={asset.filename} className="w-full h-full object-cover" />
                       {selectedClip.asset_id === asset.id && (
                         <div className="absolute inset-0 bg-purple-600/30 flex items-center justify-center">
                           <Check className="w-3.5 h-3.5 text-white" />
@@ -1035,7 +1039,7 @@ export default function DocumentaryStudioPage() {
                     {clip.asset && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={clip.asset.url}
+                        src={normalizeMediaUrl(clip.asset.url)}
                         alt=""
                         className="absolute inset-0 w-full h-full object-cover opacity-20 pointer-events-none"
                       />

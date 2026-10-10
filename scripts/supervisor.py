@@ -660,8 +660,8 @@ def print_status(verbose: bool = True) -> int:
         print(f"  Backend URL:     {BACKEND_HEALTH_URL}")
         print(f"  Frontend Port:   {FRONTEND_PORT} (PID: {f_pids or 'None'})")
         print(f"  Frontend Health: {'HEALTHY (200 OK)' if f_health else 'DOWN / UNHEALTHY'}")
-        pub_backend = get_public_backend_url()
-        print(f"  Public Backend:  {pub_backend if pub_backend else 'https://upon-separately-stuffed-becomes.trycloudflare.com'}")
+        pub_backend = os.environ.get("BACKEND_INTERNAL_URL") or os.environ.get("BACKEND_URL")
+        print(f"  Cloud Backend:   {pub_backend if pub_backend else 'Vercel Serverless API / Docker Cloud'}")
         print(f"  Vercel Frontend: https://hk-speaks-zl9v.vercel.app")
         print("=========================================================")
     return 0 if (b_health and f_health) else 1

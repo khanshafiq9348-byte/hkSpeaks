@@ -1,4 +1,5 @@
-import { apiClient, API_BASE_URL } from "./api";
+import { apiClient, API_BASE_URL, normalizeMediaUrl } from "./api";
+export { normalizeMediaUrl };
 
 export interface VideoAsset {
   id: string;

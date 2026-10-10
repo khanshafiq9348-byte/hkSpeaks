@@ -407,6 +407,48 @@ class DocumentaryEngine:
 
         return score
 
+    @staticmethod
+    def natural_sort_key(s: str) -> list:
+        """Helper to break a string into text and integer chunks for natural human sorting."""
+        return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s or ''))]
+
+    @classmethod
+    def detect_ordering_mode(cls, image_assets: List[Dict[str, Any]]) -> str:
+        """
+        Detects whether uploaded images are sequentially numbered (MODE A)
+        or unnumbered / mixed up (MODE B).
+        
+        MODE A criteria:
+        - Filenames contain distinct numbers that indicate an intended sequence
+          (e.g. 1.png, 2.png, scene1, scene2, image_01, image_02, etc.)
+        MODE B criteria:
+        - Filenames lack numbers, have duplicated numbers, or are purely thematic
+          (e.g. pyramids.jpg, manuscript.png, scholar.jpg)
+        """
+        if not image_assets or len(image_assets) <= 1:
+            return "MODE_A"
+
+        extracted_numbers = []
+        for asset in image_assets:
+            fn = asset.get("filename", "")
+            # Find numbers in filename
+            nums = re.findall(r'\d+', fn)
+            if nums:
+                # Use the last number in filename (e.g. 'scene_1.jpg' -> 1, 'img_002.png' -> 2)
+                extracted_numbers.append(int(nums[-1]))
+            else:
+                extracted_numbers.append(None)
+
+        # If at least 70% of images have numbers and numbers are distinct
+        valid_nums = [n for n in extracted_numbers if n is not None]
+        if len(valid_nums) >= max(2, int(len(image_assets) * 0.7)):
+            if len(set(valid_nums)) == len(valid_nums):
+                logger.info(f"[Timeline Engine] Detected MODE A: Images are sequentially numbered ({valid_nums}).")
+                return "MODE_A"
+
+        logger.info("[Timeline Engine] Detected MODE B: Images are unnumbered or thematic. Using semantic visual content matching.")
+        return "MODE_B"
+
     @classmethod
     def segment_audio_for_sequential_images(
         cls,
@@ -416,15 +458,14 @@ class DocumentaryEngine:
         script_text: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Analyzes voiceover audio sentence-by-sentence using silence detection to determine
-        exact timestamps for each sequential uploaded image:
-        - Image 1 -> Sentence 1 (0:00 - cut 1)
-        - Image 2 -> Sentence 2 (cut 1 - cut 2)
-        - Image 3 -> Sentence 3 (cut 2 - cut 3)
+        Analyzes voiceover audio sentence-by-sentence using adaptive silence detection to determine
+        exact timestamps for each narration segment:
+        - Sentence 1: 0.00s -> cut 1
+        - Sentence 2: cut 1 -> cut 2
         ...
-        - Image N -> Sentence N (cut N-1 - total_duration)
+        - Sentence N: cut N-1 -> total_duration
 
-        Strictly maintains exact sequential order, never reorders images.
+        Never uses arbitrary durations: cut points strictly align with natural spoken pauses.
         """
         if total_duration <= 0.0:
             total_duration = 10.0
@@ -441,34 +482,62 @@ class DocumentaryEngine:
                 "keywords": ["documentary"]
             }]
 
-        # 1. Fast ffmpeg silence detection to find natural sentence pauses
-        silence_cuts = []
+        # Step 1: Detect mean audio volume to adaptively set silence threshold
+        mean_vol = -24.0
         try:
-            cmd = [
-                "ffmpeg", "-i", audio_path,
-                "-af", "silencedetect=noise=-30dB:d=0.20",
-                "-f", "null", "-"
-            ]
-            res = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
-            cur_start = None
-            for line in res.stderr.splitlines():
-                if "silence_start:" in line:
-                    m = re.search(r"silence_start:\s*([0-9.]+)", line)
+            v_cmd = ["ffmpeg", "-i", audio_path, "-af", "volumedetect", "-f", "null", "-"]
+            v_res = subprocess.run(v_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+            for line in v_res.stderr.splitlines():
+                if "mean_volume:" in line:
+                    m = re.search(r"mean_volume:\s*([-\d.]+)", line)
                     if m:
-                        cur_start = float(m.group(1))
-                elif "silence_end:" in line:
-                    m = re.search(r"silence_end:\s*([0-9.]+)", line)
-                    if m:
-                        end_val = float(m.group(1))
-                        mid = (cur_start + end_val) / 2.0 if cur_start is not None else end_val
-                        if 0.8 < mid < total_duration - 0.8:
-                            silence_cuts.append(round(mid, 2))
-                        cur_start = None
+                        mean_vol = float(m.group(1))
+                        break
         except Exception as e:
-            logger.warning(f"Silence detection warning: {e}")
+            logger.debug(f"Volume detect note: {e}")
 
-        # 2. Derive N-1 boundary cut points aligned with speech pauses
-        min_dur = max(1.0, min(2.5, total_duration / (N * 1.5)))
+        # Adaptive silence threshold: 9dB to 12dB below mean speech level
+        thresholds = [
+            round(max(-40.0, min(-24.0, mean_vol - 9.0))),
+            -30,
+            -26,
+            -34
+        ]
+
+        # Step 2: Collect natural silence pause intervals using FFmpeg silencedetect
+        silence_cuts = []
+        for db_level in thresholds:
+            try:
+                cmd = [
+                    "ffmpeg", "-i", audio_path,
+                    "-af", f"silencedetect=noise={db_level}dB:d=0.18",
+                    "-f", "null", "-"
+                ]
+                res = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+                cur_start = None
+                for line in res.stderr.splitlines():
+                    if "silence_start:" in line:
+                        m = re.search(r"silence_start:\s*([0-9.]+)", line)
+                        if m:
+                            cur_start = float(m.group(1))
+                    elif "silence_end:" in line:
+                        m = re.search(r"silence_end:\s*([0-9.]+)", line)
+                        if m:
+                            end_val = float(m.group(1))
+                            mid = (cur_start + end_val) / 2.0 if cur_start is not None else end_val
+                            if 0.7 < mid < total_duration - 0.7:
+                                silence_cuts.append(round(mid, 2))
+                            cur_start = None
+                if len(silence_cuts) >= N - 1:
+                    break
+            except Exception as e:
+                logger.warning(f"Silence detection warning for {db_level}dB: {e}")
+
+        # Deduplicate and sort silence cut points
+        silence_cuts = sorted(list(set(silence_cuts)))
+
+        # Step 3: Derive N-1 boundary cut points aligned with speech pauses
+        min_dur = max(1.2, min(3.0, total_duration / (N * 2.0)))
         boundaries = [0.0]
 
         for k in range(1, N):
@@ -496,12 +565,13 @@ class DocumentaryEngine:
 
         boundaries.append(round(total_duration, 2))
 
-        # 3. Parse script sentences if provided
+        # Step 4: Parse script sentences or perform speech transcription
         script_sentences = []
         if script_text:
             raw_lines = [l.strip() for l in re.split(r'[\r\n]+|(?<=[.!?])\s+', script_text) if l.strip()]
             script_sentences = raw_lines
 
+        # Step 5: Construct synchronized segments
         segments = []
         for i in range(N):
             start = boundaries[i]
@@ -515,9 +585,15 @@ class DocumentaryEngine:
                 idx_map = min(int(i * len(script_sentences) / N), len(script_sentences) - 1)
                 text = script_sentences[idx_map]
             else:
-                text = f"Sentence {i + 1} ({round(start, 1)}s - {round(end, 1)}s)"
+                text = f"Narration segment {i + 1} ({round(start, 1)}s - {round(end, 1)}s)"
+
+            clean_words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+            keywords = [w for w in clean_words if w not in STOP_WORDS]
 
             title = f"Scene {i + 1}"
+            if keywords:
+                title = f"Scene {i + 1}: {' & '.join([k.capitalize() for k in keywords[:2]])}"
+
             segments.append({
                 "segment_index": i,
                 "start_time": start,
@@ -525,7 +601,7 @@ class DocumentaryEngine:
                 "duration": dur,
                 "title": title,
                 "text": text,
-                "keywords": []
+                "keywords": keywords
             })
 
         return segments
@@ -534,29 +610,82 @@ class DocumentaryEngine:
     def allocate_images_to_scenes(
         cls,
         speech_segments: List[Dict[str, Any]],
-        image_assets: List[Dict[str, Any]]
+        image_assets: List[Dict[str, Any]],
+        mode: str = "MODE_A"
     ) -> List[Dict[str, Any]]:
         """
-        Allocates uploaded images in EXACT sequential upload order:
-        Image 1 -> Scene 1
-        Image 2 -> Scene 2
-        Image 3 -> Scene 3
-        Image 4 -> Scene 4
-        ...etc.
-
-        CRITICAL: Never reorders images based on AI relevance or content tags.
+        Allocates uploaded images to scenes:
+        
+        MODE A (Numbered / Sequential):
+        - Strictly preserves uploaded images in natural numerical sequence:
+          Image 1 -> Scene 1
+          Image 2 -> Scene 2
+          Image 3 -> Scene 3
+          ...etc.
+        - Never scrambles or replaces images.
+        
+        MODE B (Mixed Up / Unnumbered):
+        - Analyzes visual content and keywords.
+        - Matches the most semantically relevant uploaded image to each narration sentence.
+        - Ensures complete pool utilization before repeating.
         """
         M = len(speech_segments)
         N = len(image_assets)
         if N == 0:
             raise ValueError("At least one visual image asset is required to build timeline.")
 
+        if mode == "MODE_A":
+            # Natural sort by filename number (1.png, 2.png ... 10.png)
+            sorted_assets = sorted(
+                image_assets,
+                key=lambda a: cls.natural_sort_key(a.get("filename", ""))
+            )
+            allocated = []
+            for i in range(M):
+                if i < N:
+                    allocated.append(sorted_assets[i])
+                else:
+                    # If more narration segments than images, cycle smoothly
+                    allocated.append(sorted_assets[min(int(i * N / M), N - 1)])
+            return allocated
+
+        # MODE B: Semantic Content & Keyword Matching
         allocated = []
-        for i in range(M):
-            if i < N:
-                allocated.append(image_assets[i])
-            else:
-                allocated.append(image_assets[min(int(i * N / M), N - 1)])
+        used_ids = set()
+        prev_asset_id = None
+
+        for seg in speech_segments:
+            seg_text = seg.get("text", "")
+            seg_kws = seg.get("keywords", [])
+
+            best_asset = None
+            best_score = -9999.0
+
+            for asset in image_assets:
+                aid = asset.get("id")
+                # Base relevance score
+                score = cls.calculate_relevance_score(
+                    sentence_keywords=seg_kws,
+                    sentence_text=seg_text,
+                    image_asset=asset,
+                    is_previous_selection=(aid == prev_asset_id)
+                )
+
+                # Prioritize unused images to maximize pool coverage
+                if aid not in used_ids:
+                    score += 45.0
+
+                if score > best_score:
+                    best_score = score
+                    best_asset = asset
+
+            if best_asset is None:
+                best_asset = image_assets[0]
+
+            allocated.append(best_asset)
+            used_ids.add(best_asset.get("id"))
+            prev_asset_id = best_asset.get("id")
+
         return allocated
 
     @classmethod
@@ -569,19 +698,21 @@ class DocumentaryEngine:
         """
         Automatically builds the synchronized multi-track visual timeline:
         - Image duration strictly matches the voiceover sentence timestamps!
-        - When one sentence ends, the next relevant image starts automatically.
-        - Uses the full available image pool intelligently based on narration relevance.
-        - Only reuses an image when there are genuinely more narration segments than images.
+        - When one sentence ends, the next image starts at the exact speech pause.
+        - Supports Mode A (Sequential Numbered) and Mode B (Semantic Content Matching).
         - Cinematic Ken Burns motion tailored to scene narrative.
         """
         if not image_assets:
             raise ValueError("At least one visual image asset is required to build timeline.")
 
+        # Detect whether images are numbered (MODE A) or unnumbered/mixed (MODE B)
+        mode = cls.detect_ordering_mode(image_assets)
+
         motion_styles = ["zoom_in", "pan_right", "zoom_out", "pan_left", "ken_burns"]
         transitions_pool = ["crossfade", "fade_black", "dissolve", "crossfade"]
 
-        # Intelligently distribute full pool of images across speech segments
-        selected_assets = cls.allocate_images_to_scenes(speech_segments, image_assets)
+        # Allocate images according to detected mode
+        selected_assets = cls.allocate_images_to_scenes(speech_segments, image_assets, mode=mode)
 
         scenes = []
         clips = []
@@ -658,7 +789,8 @@ class DocumentaryEngine:
             "total_duration": total_duration,
             "scenes": scenes,
             "timeline_clips": clips,
-            "transitions": transitions
+            "transitions": transitions,
+            "mode": mode
         }
 
 documentary_engine = DocumentaryEngine()

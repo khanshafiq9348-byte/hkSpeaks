@@ -135,6 +135,16 @@ async def get_project_details(
         sorted_jobs = sorted(project.render_jobs, key=lambda j: j.created_at, reverse=True)
         latest_job = sorted_jobs[0]
 
+    def _nat_key(name: str):
+        return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(name or ''))]
+
+    sorted_assets = sorted(
+        project.assets,
+        key=lambda a: (0, _nat_key(a.filename)) if re.search(r'\d+', a.filename or '') else (1, [a.created_at])
+    )
+    sorted_scenes = sorted(project.scenes, key=lambda s: s.scene_index)
+    sorted_clips = sorted(project.timeline_clips, key=lambda c: (c.track_index, c.start_time, c.clip_index))
+
     return VideoProjectDetailResponse(
         id=project.id,
         title=project.title,
@@ -144,7 +154,7 @@ async def get_project_details(
         resolution=project.resolution,
         fps=project.fps,
         total_duration=project.total_duration,
-        assets=[VideoAssetResponse.model_validate(a) for a in project.assets],
+        assets=[VideoAssetResponse.model_validate(a) for a in sorted_assets],
         voiceover=VoiceoverResponse.model_validate(project.voiceover) if project.voiceover else None,
         scenes=[
             SceneResponse(
@@ -158,7 +168,7 @@ async def get_project_details(
                 duration=s.duration,
                 primary_asset_id=s.primary_asset_id,
                 primary_asset=VideoAssetResponse.model_validate(s.primary_asset) if s.primary_asset else None
-            ) for s in project.scenes
+            ) for s in sorted_scenes
         ],
         timeline_clips=[
             TimelineClipResponse(
@@ -175,7 +185,7 @@ async def get_project_details(
                 scale_factor=c.scale_factor,
                 framing=c.framing,
                 asset=VideoAssetResponse.model_validate(c.asset) if c.asset else None
-            ) for c in project.timeline_clips
+            ) for c in sorted_clips
         ],
         transitions=[TimelineTransitionResponse.model_validate(t) for t in project.transitions],
         render_outputs=[RenderOutputResponse.model_validate(o) for o in project.render_outputs],
@@ -275,8 +285,6 @@ async def upload_assets(
         mime_type = file.content_type or ("audio/mpeg" if ext == ".mp3" else "image/jpeg")
 
         url = await storage_service.upload_audio(storage_key, file_bytes, mime_type)
-        if url.startswith("/v1/storage"):
-            url = f"http://localhost:8000{url}"
 
         asset_time = base_time + timedelta(milliseconds=idx * 10)
         asset = VideoAsset(
@@ -403,8 +411,13 @@ async def generate_documentary_timeline(
     if not image_assets:
         raise HTTPException(status_code=400, detail="At least one image asset is required to generate a documentary.")
 
-    # CRITICAL: Preserve EXACT upload order
-    image_assets.sort(key=lambda a: a.created_at)
+    # Detect ordering mode (Mode A: sequential numbered vs Mode B: semantic content matching)
+    raw_dicts = [{"filename": a.filename} for a in image_assets]
+    mode = documentary_engine.detect_ordering_mode(raw_dicts)
+    if mode == "MODE_A":
+        image_assets.sort(key=lambda a: documentary_engine.natural_sort_key(a.filename))
+    else:
+        image_assets.sort(key=lambda a: a.created_at)
 
     vo_path = storage_service.get_local_path(project.voiceover.storage_key)
     if not vo_path or not os.path.exists(vo_path):

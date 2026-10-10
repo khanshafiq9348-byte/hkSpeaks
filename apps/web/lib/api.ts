@@ -5,11 +5,11 @@ export const API_BASE_URL =
     : "http://127.0.0.1:8000/v1");
 
 /**
- * Normalizes an audio URL to ensure it is playable from any device/origin.
- * Converts hardcoded 'http://localhost:8000/v1/storage/...' to match current origin.
+ * Normalizes any media URL (image, video, audio) to ensure it is loadable from any device/origin.
+ * Converts hardcoded 'http://localhost:8000/v1/storage/...' or relative '/v1/storage/...' to match current origin.
  */
-export function getPlayableAudioUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
+export function normalizeMediaUrl(url: string | null | undefined): string {
+  if (!url) return "";
   if (typeof window !== "undefined") {
     if (url.includes("localhost:8000/v1/storage/") || url.includes("127.0.0.1:8000/v1/storage/")) {
       return url.replace(/^https?:\/\/(localhost|127\.0\.0\.1):8000\/v1\/storage\//, `${window.location.origin}/v1/storage/`);
@@ -19,6 +19,11 @@ export function getPlayableAudioUrl(url: string | null | undefined): string | nu
     }
   }
   return url;
+}
+
+export function getPlayableAudioUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  return normalizeMediaUrl(url);
 }
 
 export interface ApiError {
